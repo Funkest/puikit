@@ -1489,3 +1489,154 @@ def test_search_matcher_none_result_stays_literal(backend):
     panel.render()
     assert view.search_set("grail") == 1
     assert view._search_rows == [2]
+
+
+# --- on_link: a per-view link handler ----------------------------------------
+
+def _opening_backend(opened, **kw):
+    class OpeningBackend(MemoryBackend):
+        def open_url(self, url):
+            opened.append(url)
+            return True
+    return OpeningBackend(**kw)
+
+
+def test_on_link_sees_a_clicked_href_first_whatever_its_scheme():
+    opened, seen = [], []
+    backend = _opening_backend(opened, width=40, height=8, capabilities=PROFILE_GUI_DESKTOP)
+    panel = Panel(backend)
+    view = MarkdownView("see [docs](myapp:page/2) here",
+                        on_link=lambda url: seen.append(url) or True)
+    panel.add(view, x=0, y=0, w=40, h=8)
+    panel.render()
+    panel.dispatch_event(Event(type=EventType.MOUSE_CLICK, x=5, y=0))
+    assert seen == ["myapp:page/2"]
+    assert opened == []          # handled: the OS never hears of it
+
+
+def test_a_declining_on_link_leaves_the_builtin_behavior():
+    opened, seen = [], []
+    backend = _opening_backend(opened, width=40, height=8, capabilities=PROFILE_GUI_DESKTOP)
+    panel = Panel(backend)
+    view = MarkdownView("see [docs](http://x) here",
+                        on_link=lambda url: seen.append(url) or False)
+    panel.add(view, x=0, y=0, w=40, h=8)
+    panel.render()
+    panel.dispatch_event(Event(type=EventType.MOUSE_CLICK, x=5, y=0))
+    assert seen == ["http://x"] and opened == ["http://x"]
+
+
+def test_each_view_has_its_own_handler():
+    a, b = [], []
+    va = MarkdownView("[x](s:1)", on_link=lambda u: a.append(u) or True)
+    vb = MarkdownView("[x](s:1)", on_link=lambda u: b.append(u) or True)
+    va.follow_link("s:1")
+    assert a == ["s:1"] and b == []
+    vb.follow_link("s:2")
+    assert b == ["s:2"]
+
+
+# --- keyboard link focus -------------------------------------------------------
+
+def _key(name, mods=()):
+    return Event(type=EventType.KEY, key=name, modifiers=frozenset(mods))
+
+
+def _shown(source, *, width=40, height=8, caps=PROFILE_TUI, **kw):
+    backend = MemoryBackend(width=width, height=height, capabilities=caps)
+    panel = Panel(backend)
+    view = MarkdownView(source, **kw)
+    panel.add(view, x=0, y=0, w=width, h=height)
+    panel.render()
+    return backend, panel, view
+
+
+def test_focus_advance_walks_links_in_document_order(backend):
+    _b, _p, view = _shown("[one](u:1) and [two](u:2)\n\n[three](u:3)")
+    hrefs = []
+    while view.focus_advance(1):
+        hrefs.append(view.focused_link)
+    assert hrefs == ["u:1", "u:2", "u:3"]
+    # Off the end: the focus is cleared and the step is refused, so the focus
+    # order can move on past the view.
+    assert view.focused_link is None
+
+
+def test_focus_advance_backwards():
+    _b, _p, view = _shown("[one](u:1) and [two](u:2)")
+    assert view.focus_advance(-1) and view.focused_link == "u:2"
+    assert view.focus_advance(-1) and view.focused_link == "u:1"
+    assert not view.focus_advance(-1)
+
+
+def test_a_wrapped_link_is_one_stop():
+    _b, _p, view = _shown("[a link long enough to wrap twice](u:1) [next](u:2)", width=12)
+    assert view.focus_advance(1) and view.focused_link == "u:1"
+    assert view.focus_advance(1) and view.focused_link == "u:2"
+
+
+def test_links_in_a_table_are_stops():
+    _b, _p, view = _shown("| Key | Action |\n| --- | --- |\n| `C` | [copy](a:copy) |\n"
+                          "| `M` | [move](a:move) |", width=40, height=10)
+    assert view.focus_advance(1) and view.focused_link == "a:copy"
+    assert view.focus_advance(1) and view.focused_link == "a:move"
+
+
+def test_enter_follows_the_focused_link_and_is_inert_without_one():
+    seen = []
+    _b, _p, view = _shown("[one](u:1)", on_link=lambda u: seen.append(u) or True)
+    assert not view.handle_event(_key("enter"))
+    view.focus_advance(1)
+    assert view.handle_event(_key("enter"))
+    assert seen == ["u:1"]
+
+
+def test_the_focused_link_is_highlighted(backend):
+    panel = Panel(backend)
+    view = MarkdownView("[one](u:1) two")
+    panel.add(view, x=0, y=0, w=20, h=8)
+    panel.render()
+    fill = DEFAULT_THEME.selection_active_bg
+    assert backend.style_at(1, 0).bg != fill
+    view.focus_advance(1)
+    panel.render()
+    assert backend.style_at(1, 0).bg == fill       # inside "one"
+    assert backend.style_at(5, 0).bg != fill       # "two" is not the link
+
+
+def test_stepping_scrolls_the_link_into_view():
+    source = "\n\n".join(f"para {i}" for i in range(30)) + "\n\n[end](u:end)"
+    _b, panel, view = _shown(source, height=6)
+    assert view.offset == 0
+    assert view.focus_advance(1) and view.focused_link == "u:end"
+    assert view.offset > 0
+    panel.render()
+
+
+def test_the_first_step_starts_from_the_viewport():
+    source = "[top](u:top)\n\n" + "\n\n".join(f"para {i}" for i in range(30)) + "\n\n[low](u:low)"
+    _b, panel, view = _shown(source, height=6)
+    view.offset = 40.0
+    panel.render()
+    assert view.focus_advance(1) and view.focused_link == "u:low"
+
+
+def test_panel_tab_reaches_the_links_of_a_focused_view():
+    """The Panel's Tab traversal asks the focused leaf to consume the step, so
+    a top-level view's links are stops in the ordinary focus order."""
+    _b, panel, view = _shown("[one](u:1) [two](u:2)")
+    panel.set_focused(view)
+    panel.dispatch_event(_key("tab"))
+    assert view.focused_link == "u:1"
+    panel.dispatch_event(_key("tab"))
+    assert view.focused_link == "u:2"
+    panel.dispatch_event(_key("tab", {"shift"}))
+    assert view.focused_link == "u:1"
+
+
+def test_set_source_drops_the_link_focus():
+    _b, panel, view = _shown("[one](u:1)")
+    view.focus_advance(1)
+    view.set_source("[other](u:9)")
+    panel.render()
+    assert view.focused_link is None

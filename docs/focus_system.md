@@ -53,7 +53,11 @@ supplies the rest in terms of a stored `_focused` child:
   the end, so the caller advances to *its* next child.
 
 Leaf widgets implement nothing: they simply are not `FocusContainer`s, so
-traversal lands on them and stops. The whole protocol is duck-typed on four
+traversal lands on them and stops. A leaf with **stops of its own** — a
+`MarkdownView` stepping through its links — implements `focus_advance` alone,
+with the same contract: move to its next internal stop, or return `False` at the
+end so the walk moves past it. `_advance` asks any focused child that offers the
+method, container or not. The whole protocol is duck-typed on four
 members (`focus_children`, `get_focused`, `set_focused`, `_focus_moved`), so the
 **Panel** — which is not a `Widget` — drives the identical walk over its
 top-level slots without subclassing.

@@ -51,6 +51,15 @@ they land — and the inline runs ``**bold**``, ``*italic*`` / ``_italic_``,
 ``~~strikethrough~~``, ```` `code` ````, ``[text](url)`` / ``[text][ref]``
 reference links, ``<autolinks>`` and bare URLs, and backslash escapes. A
 ``[jump](#heading)`` link scrolls the view to that heading.
+
+Links are reachable from the keyboard as well as the mouse: Tab / Shift+Tab step
+through them in document order (each is an internal stop of the view's place in
+the focus order — see ``focus_advance``), the stepped-to link is highlighted and
+scrolled into view, and Enter follows it. A host that gives a link a meaning of
+its own — an in-app page, its own URL scheme — installs ``on_link``, which sees
+every href first, whatever its scheme, and declines what it does not handle;
+the built-in behavior (``#slug`` scrolls, anything else goes to
+``Panel.open_url``) then applies.
 """
 
 from __future__ import annotations
@@ -990,8 +999,17 @@ class MarkdownView(Widget):
         heading_scales: dict[int, float] = DEFAULT_HEADING_SCALES,
         selectable: bool = False,
         base_dir: str | None = None,
+        on_link: Callable[[str], bool] | None = None,
     ):
         self.style = style
+        #: Link handler, per view: called with a followed link's href, exactly
+        #: as written, before anything else happens to it — by a click or by
+        #: Enter on a keyboard-focused link. Return True to say it was handled;
+        #: False (or no handler) leaves the built-in behavior: a ``#slug``
+        #: scrolls to that heading, anything else goes to ``Panel.open_url``.
+        #: The view interprets no scheme on the handler's behalf, so a host may
+        #: use any it likes (``myapp:page``) without PuiKit knowing of it.
+        self.on_link = on_link
         # Prose face (proportional on GUI) and code face (monospace). Both fold
         # to the single grid font on a terminal; bold/italic survive as attrs.
         self.text_font = text_font
@@ -1043,6 +1061,16 @@ class MarkdownView(Widget):
         # Heading slug -> its top offset (base units), for ``[jump](#slug)`` links.
         # Rebuilt each layout alongside the row index.
         self._anchors: dict[str, float] = {}
+        # Keyboard link focus. ``_links`` is every link in document order, each a
+        # list of the span positions it occupies — ``(row, cell, line, span)``,
+        # cell and line -1 outside a table — collected from the current layout
+        # (``_links_rows`` is the layout it was built from). ``_link_focus`` is an
+        # index into it, -1 for none. The ordinal survives a re-wrap: wrapping
+        # splits a link's spans across more rows but never changes how many
+        # links there are or their order.
+        self._links: list[list[tuple[int, int, int, int]]] = []
+        self._links_rows: list[_Row] | None = None
+        self._link_focus: int = -1
 
         # Incremental search (driven by a host viewer's search bar; see the
         # ``search_*`` methods). The pattern highlights every occurrence in the
@@ -1141,6 +1169,7 @@ class MarkdownView(Widget):
         self._wrap_view_h = -1.0
         self._layout_cache.clear()
         self._cache_view_h = -1.0
+        self._links, self._links_rows, self._link_focus = [], None, -1
         self.clear_search()
         self.clear_selection()
 
@@ -1597,6 +1626,7 @@ class MarkdownView(Widget):
         self._sync_search()
         current_match = (self._search_rows[self._search_pos]
                          if 0 <= self._search_pos < len(self._search_rows) else -1)
+        focus_parts = self._focused_link_parts()
 
         # Binary-search the cumulative tops for the first row whose bottom is
         # below the viewport top, then draw down until a row starts past the
@@ -1622,7 +1652,8 @@ class MarkdownView(Widget):
                 ctx.draw_hairline(d * _QUOTE_INDENT + 0.5, y, row.height, vertical=True,
                                   style=Style(fg=theme.muted_text))
             if row.table is not None:
-                self._draw_table_row(ctx, y, row.height, row.table, theme)
+                self._draw_table_row(ctx, y, row.height, row.table, theme,
+                                     index=index, focus_parts=focus_parts)
                 if self.selectable:
                     # A table row draws itself and continues, so overlay its
                     # selection highlight here (the flat-row pass below is skipped).
@@ -1635,11 +1666,13 @@ class MarkdownView(Widget):
                 ctx.fill_rect(fx, y, max(0.0, self._wrap_width - fx), row.height,
                               Style(bg=row.code_bg))
             x = row.x0
-            for text, style, href in row.spans:
+            for si, (text, style, href) in enumerate(row.spans):
                 if not text:
                     continue
-                ctx.draw_text(x, y, text, style)
                 w = ctx.measure_text(text, style)
+                if (index, -1, -1, si) in focus_parts:
+                    style = self._focus_link_style(ctx, x, y, w, row.height, style, theme)
+                ctx.draw_text(x, y, text, style)
                 if href:
                     self._link_hits.append((x, y, x + w, y + row.height, href))
                 x += w
@@ -1669,7 +1702,8 @@ class MarkdownView(Widget):
             )
 
     def _draw_table_row(
-        self, ctx: DrawContext, y: float, height: float, tr: _TableRow, theme: Theme
+        self, ctx: DrawContext, y: float, height: float, tr: _TableRow, theme: Theme,
+        *, index: int = -1, focus_parts: frozenset = frozenset(),
     ) -> None:
         """Draw one table row. A horizontal-border row is a single rule across the
         table width; a text row draws each cell's wrapped lines aligned within its
@@ -1725,7 +1759,7 @@ class MarkdownView(Widget):
                     ox = 0.0
                 ctx.draw_image(text_x + ox, y + tr.pad_v, path,
                                hints={"w": iw, "h": ih, "fit": "contain", "alt": alt})
-        for text_x, w, align, lines in tr.cells:
+        for ci, (text_x, w, align, lines) in enumerate(tr.cells):
             for li, line in enumerate(lines):
                 lw = sum(ctx.measure_text(t, st) for t, st, _ in line if t)
                 if align == "right":
@@ -1736,11 +1770,14 @@ class MarkdownView(Widget):
                     ox = 0.0
                 x = text_x + ox
                 ly = y + tr.pad_v + li * self._line_pitch
-                for text, style, href in line:
+                for si, (text, style, href) in enumerate(line):
                     if not text:
                         continue
-                    ctx.draw_text(x, ly, text, style)
                     tw = ctx.measure_text(text, style)
+                    if (index, ci, li, si) in focus_parts:
+                        style = self._focus_link_style(
+                            ctx, x, ly, tw, self._line_pitch, style, theme)
+                    ctx.draw_text(x, ly, text, style)
                     if href:
                         self._link_hits.append((x, ly, x + tw, ly + self._line_pitch, href))
                     x += tw
@@ -2487,13 +2524,13 @@ class MarkdownView(Widget):
                 if event.key == "a":
                     self._select_all()
                     return True
+            if event.key == "enter" and self.activate_focused_link():
+                return True
             return self._handle_key(event.key)
         return False
 
     def _handle_click(self, event: Event) -> bool:
-        """Open the link under the click, if any. A ``#slug`` link scrolls to that
-        heading in-document; otherwise the Panel resolves the open (``os_open``
-        backends launch the OS handler, others copy the URL) — no widget branch."""
+        """Follow the link under the click, if any (see :meth:`follow_link`)."""
         if event.x is None or event.y is None:
             return False
         # A click that ended a drag-select (or lands while a selection stands) is
@@ -2504,15 +2541,158 @@ class MarkdownView(Widget):
             return True
         for x0, y0, x1, y1, url in self._link_hits:
             if x0 <= event.x < x1 and y0 <= event.y < y1:
-                if url.startswith("#"):
-                    top = self._anchors.get(_slug(url[1:]))
-                    if top is not None:
-                        self.offset = top
-                        self._clamp(self._content_h())
-                elif self._panel is not None:
-                    self._panel.open_url(url)
+                self.follow_link(url)
                 return True
         return False
+
+    def follow_link(self, url: str) -> None:
+        """Follow one link, however it was chosen. ``on_link`` sees it first,
+        whatever its scheme; when it declines (or there is none), a ``#slug``
+        link scrolls to that heading in-document and anything else goes to the
+        Panel (``os_open`` backends launch the OS handler, others copy the URL)
+        — no widget branch."""
+        if self.on_link is not None and self.on_link(url):
+            return
+        if url.startswith("#"):
+            top = self._anchors.get(_slug(url[1:]))
+            if top is not None:
+                self.offset = top
+                self._clamp(self._content_h())
+        elif self._panel is not None:
+            self._panel.open_url(url)
+
+    # --- keyboard link focus --------------------------------------------------
+
+    def _collect_links(self) -> list[list[tuple[int, int, int, int]]]:
+        """Every link in the current layout, in document order, each as the span
+        positions it covers. A link is a run of consecutive spans sharing one
+        href, so a link wrapped across rows (or split by an inner style change)
+        is one stop, and any span without that href — a space, other text —
+        ends it. Cached per layout."""
+        rows = self._rows
+        if rows is self._links_rows:
+            return self._links
+        links: list[list[tuple[int, int, int, int]]] = []
+        prev: str | None = None
+
+        def visit(key: tuple[int, int, int, int], href: str | None) -> None:
+            nonlocal prev
+            if href is None:
+                prev = None
+                return
+            if href == prev and links:
+                links[-1].append(key)
+            else:
+                links.append([key])
+            prev = href
+
+        for r, row in enumerate(rows or ()):
+            if row.table is not None:
+                if row.table.hline:
+                    continue
+                for ci, (_x, _w, _a, lines) in enumerate(row.table.cells):
+                    prev = None  # a cell boundary ends a link
+                    for li, line in enumerate(lines):
+                        for si, (text, _st, href) in enumerate(line):
+                            if text:
+                                visit((r, ci, li, si), href)
+                prev = None
+                continue
+            if row.image is not None or row.rule:
+                prev = None
+                continue
+            for si, (text, _st, href) in enumerate(row.spans):
+                if text:
+                    visit((r, -1, -1, si), href)
+        self._links, self._links_rows = links, rows
+        if self._link_focus >= len(links):
+            self._link_focus = -1
+        return links
+
+    def _focused_link_parts(self) -> frozenset:
+        links = self._collect_links()
+        if 0 <= self._link_focus < len(links):
+            return frozenset(links[self._link_focus])
+        return frozenset()
+
+    @staticmethod
+    def _focus_link_style(
+        ctx: DrawContext, x: float, y: float, w: float, h: float,
+        style: Style, theme: Theme,
+    ) -> Style:
+        """Paint the keyboard-focused link's highlight under one of its spans
+        and return the style to draw the span's text in: the theme's active
+        selection fill, the span's own color and font kept — a link reads as a
+        link while it is the focused one."""
+        bg = getattr(theme, "selection_active_bg", None)
+        if bg is None:
+            return replace(style, attr=style.attr | TextAttribute.REVERSE)
+        ctx.fill_rect(x, y, w, h, Style(bg=bg))
+        return replace(style, bg=bg)
+
+    @property
+    def focused_link(self) -> str | None:
+        """The href of the keyboard-focused link, or None."""
+        links = self._collect_links()
+        if not 0 <= self._link_focus < len(links):
+            return None
+        r, ci, li, si = links[self._link_focus][0]
+        row = self._rows[r]
+        if ci < 0:
+            return row.spans[si][2]
+        return row.table.cells[ci][3][li][si][2]
+
+    def focus_advance(self, direction: int) -> bool:
+        """Step keyboard focus to the next (``direction`` > 0) or previous link,
+        scrolling it into view. With no link focused the step starts from the
+        viewport: forwards at the first link at or below its top, backwards at
+        the last one above its bottom. Stepping off either end clears the link
+        focus and returns False, so the focus order moves on to the next widget
+        — the same contract as :meth:`FocusContainer.focus_advance`, which is
+        how the Panel's Tab traversal reaches links at all."""
+        links = self._collect_links()
+        if not links:
+            return False
+        if self._link_focus < 0:
+            tops = self._row_tops
+            if direction > 0:
+                visible = [i for i, link in enumerate(links)
+                           if tops[link[0][0]] >= self.offset - _EDGE_INSET]
+                target = visible[0] if visible else len(links)
+            else:
+                bottom = self.offset + self._view_h
+                visible = [i for i, link in enumerate(links)
+                           if tops[link[-1][0] + 1] <= bottom + _EDGE_INSET]
+                target = visible[-1] if visible else -1
+        else:
+            target = self._link_focus + (1 if direction > 0 else -1)
+        if not 0 <= target < len(links):
+            self._link_focus = -1
+            return False
+        self._link_focus = target
+        self._scroll_link_into_view(links[target])
+        return True
+
+    def clear_link_focus(self) -> None:
+        """Drop the keyboard link focus (nothing highlighted, Enter inert)."""
+        self._link_focus = -1
+
+    def activate_focused_link(self) -> bool:
+        """Follow the keyboard-focused link; False when none is focused."""
+        url = self.focused_link
+        if url is None:
+            return False
+        self.follow_link(url)
+        return True
+
+    def _scroll_link_into_view(self, parts: list[tuple[int, int, int, int]]) -> None:
+        top = self._row_tops[parts[0][0]]
+        bottom = self._row_tops[parts[-1][0] + 1]
+        if top < self.offset:
+            self.offset = top
+        elif bottom > self.offset + self._view_h:
+            self.offset = max(top, bottom - self._view_h)
+        self._clamp(self._content_h())
 
     def _handle_key(self, key: str | None) -> bool:
         if key == "up":

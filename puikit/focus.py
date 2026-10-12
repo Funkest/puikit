@@ -106,8 +106,13 @@ def _advance(container: Any, direction: int) -> bool:
     cur = container.get_focused()
     if cur not in children:
         return _enter(container, direction)
-    # Let a nested container consume the step internally before we move past it.
-    if isinstance(cur, FocusContainer) and cur.focus_advance(direction):
+    # Let the focused child consume the step internally before we move past it:
+    # a nested container moving among its children, or a leaf with stops of
+    # its own (a MarkdownView stepping through its links). Asked of any child
+    # that offers ``focus_advance``, with the same contract — False when the
+    # step runs off its end, so focus moves on past it.
+    advance = getattr(cur, "focus_advance", None)
+    if callable(advance) and advance(direction):
         container._focus_moved()
         return True
     step = children.index(cur) + direction

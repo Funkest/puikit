@@ -34,7 +34,7 @@ One implementation each, running unchanged on every backend.
 | `Splitter` | `splitter.py` | Two panes with a draggable divider (drag to resize) |
 | `ListView` | `list.py` | Scrollable selectable rows; text by default (over-long rows clip, or elide with `ellipsis`/`elide_where`), or a widget per row via `row_factory`; `allow_no_selection` permits `selected == -1`, drawn with no highlight at all |
 | `LogView` | `log_view.py` | Virtualized append-only stream; per-line color, wrap, drag-select + copy (a drag held past an edge keeps scrolling, so a selection runs past one screenful), tail-follow |
-| `MarkdownView` | `markdown_view.py` | Scrolling read-only Markdown viewer; proportional prose + monospace/sized headings, clickable links, images; opt-in `selectable` (drag-select + copy as plain **and** rich HTML; a drag held past an edge keeps scrolling) |
+| `MarkdownView` | `markdown_view.py` | Scrolling read-only Markdown viewer; proportional prose + monospace/sized headings, clickable links (Tab / Enter from the keyboard; per-view `on_link` handler for any scheme), images; opt-in `selectable` (drag-select + copy as plain **and** rich HTML; a drag held past an edge keeps scrolling) |
 | `TreeView` / `TreeNode` | `tree.py` | Expandable hierarchical rows with indentation |
 | `Tabs` | `tabs.py` | Title strip swapping a content pane |
 | `MenuBar` / `MenuPopup` | `menu.py` | Widget-rendered menu fallback (non-`native_menus` backends) |
@@ -184,7 +184,12 @@ Inline mixed styles, links, flowing content.
   header fill + zebra stripes on a character grid, where a rule per row would cost
   a whole text row), **task lists** (`- [ ]` / `- [x]`), **clickable hyperlinks**
   (`Panel.open_url`, new `os_open` capability, clipboard fallback on TUI, a
-  `pointer` cursor over a link's hit rect, `#heading` anchors scroll in-document),
+  `pointer` cursor over a link's hit rect, `#heading` anchors scroll in-document;
+  **keyboard links** — Tab / Shift+Tab step through them as internal focus
+  stops, highlighted and scrolled into view, Enter follows one; and a per-view
+  **`on_link(href) -> bool`** handler that sees every followed href first,
+  whatever its scheme, so a host can give links in-app meanings and decline the
+  rest to the built-in behavior),
   and **block images** (sized to aspect ratio via `aspect_extent`, alt glyph on
   TUI; a table cell that is *exactly one* image renders it fitted to its column
   — the side-by-side screenshot table. A relative path resolves against

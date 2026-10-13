@@ -4093,6 +4093,27 @@ class MacOSBackend(Backend):
             pb.setString_forType_(html, NSPasteboardTypeHTML)
         pb.setString_forType_(text, NSPasteboardTypeString)
 
+    # --- file clipboard (capability "clipboard_files") ---------------------------
+
+    def set_clipboard_files(self, paths: list[str], cut: bool = False) -> bool:
+        """Write ``paths`` as file URLs, which Finder pastes as files. macOS
+        has no cut for files (Finder moves on Cmd-Opt-V), so ``cut`` is not
+        written."""
+        pb = NSPasteboard.generalPasteboard()
+        pb.clearContents()
+        urls = [NSURL.fileURLWithPath_(str(p)) for p in paths]
+        return bool(pb.writeObjects_(urls))
+
+    def get_clipboard_files(self):
+        from ..clipboard import ClipboardFiles
+        urls = NSPasteboard.generalPasteboard().readObjectsForClasses_options_(
+            [NSURL], {"NSPasteboardURLReadingFileURLsOnlyKey": True})
+        paths = tuple(str(u.path()) for u in (urls or ()) if u.isFileURL() and u.path())
+        return ClipboardFiles(paths) if paths else None
+
+    def clipboard_change_count(self) -> int | None:
+        return int(NSPasteboard.generalPasteboard().changeCount())
+
     # --- pointer shape -------------------------------------------------------
 
     # CSS/X cursor name -> NSCursor factory selector. Names AppKit has no cursor

@@ -8,6 +8,8 @@ based on the backend's CapabilityProfile.
 
 from __future__ import annotations
 
+from .clipboard import ClipboardFiles  # noqa: F401 — the file clipboard's type
+
 import logging
 import threading
 import time
@@ -819,6 +821,33 @@ class Backend(ABC):
         write the extra pasteboard types. The Panel/widget layer never branches
         on the capability."""
         self.set_clipboard(text)
+
+    # --- file clipboard (capability "clipboard_files") ---------------------------
+
+    def set_clipboard_files(self, paths: list[str], cut: bool = False) -> bool:
+        """Put ``paths`` (local files) on the OS clipboard, so another
+        application — Finder, Explorer — can paste them. ``cut`` asks the
+        pasting application to move them, where the platform has such a
+        thing (Windows); elsewhere it is ignored.
+
+        Returns True if the OS clipboard now holds the files. The default has
+        no OS clipboard for files and returns False — an app keeps its own
+        file clipboard regardless, so a backend without one costs only the
+        interop. Only backends with ``clipboard_files`` override this."""
+        return False
+
+    def get_clipboard_files(self) -> "ClipboardFiles | None":
+        """The files on the OS clipboard (copied in Finder or Explorer, or by
+        :meth:`set_clipboard_files`), or None when it holds none. The default
+        has no OS file clipboard and returns None."""
+        return None
+
+    def clipboard_change_count(self) -> int | None:
+        """A number that changes whenever anything writes the OS clipboard —
+        macOS ``changeCount``, Windows' clipboard sequence number — so an app
+        can tell whether another application has replaced what it put there.
+        None where the backend cannot say (no OS clipboard for files)."""
+        return None
 
     # --- pointer shape (capability "pointer_shape"; Panel gates the calls) ----
 

@@ -2129,6 +2129,111 @@ def set_clipboard_text(hwnd: int, text: str) -> None:
         user32.CloseClipboard()
 
 
+# --- file clipboard: CF_HDROP + "Preferred DropEffect" ---------------------------
+#
+# What Explorer writes on Copy / Cut and reads on Paste: a DROPFILES header
+# followed by the paths, NUL-separated and ending in a double NUL, as UTF-16;
+# plus a registered "Preferred DropEffect" DWORD — DROPEFFECT_MOVE (2) for a
+# Cut, DROPEFFECT_COPY (1) otherwise.
+
+CF_HDROP = 15
+DROPEFFECT_COPY = 1
+DROPEFFECT_MOVE = 2
+
+
+class DROPFILES(ctypes.Structure):
+    _fields_ = [("pFiles", wintypes.DWORD), ("pt", wintypes.POINT),
+                ("fNC", wintypes.BOOL), ("fWide", wintypes.BOOL)]
+
+
+user32.RegisterClipboardFormatW.restype = ctypes.c_uint
+user32.RegisterClipboardFormatW.argtypes = [ctypes.c_wchar_p]
+user32.GetClipboardSequenceNumber.restype = wintypes.DWORD
+user32.GetClipboardSequenceNumber.argtypes = []
+shell32.DragQueryFileW.restype = ctypes.c_uint
+shell32.DragQueryFileW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_uint]
+
+_DROP_EFFECT_FORMAT = None
+
+
+def _drop_effect_format() -> int:
+    global _DROP_EFFECT_FORMAT
+    if _DROP_EFFECT_FORMAT is None:
+        _DROP_EFFECT_FORMAT = user32.RegisterClipboardFormatW("Preferred DropEffect")
+    return _DROP_EFFECT_FORMAT
+
+
+def _global_bytes(data: bytes):
+    handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+    if not handle:
+        return None
+    ptr = kernel32.GlobalLock(handle)
+    ctypes.memmove(ptr, data, len(data))
+    kernel32.GlobalUnlock(handle)
+    return handle
+
+
+def dropfiles_bytes(paths: list) -> bytes:
+    """The CF_HDROP payload for ``paths``: a DROPFILES header (wide names),
+    then the names NUL-separated, ending in a double NUL, as UTF-16."""
+    header = DROPFILES(ctypes.sizeof(DROPFILES), wintypes.POINT(0, 0), False, True)
+    names = ("\0".join(str(p) for p in paths) + "\0\0").encode("utf-16-le", "surrogatepass")
+    return bytes(header) + names
+
+
+def set_clipboard_files(hwnd: int, paths: list, cut: bool = False) -> bool:
+    """Put ``paths`` on the clipboard the way Explorer's Copy / Cut does."""
+    if not paths or not user32.OpenClipboard(hwnd):
+        return False
+    try:
+        user32.EmptyClipboard()
+        hdrop = _global_bytes(dropfiles_bytes(paths))
+        if hdrop is None or not user32.SetClipboardData(CF_HDROP, hdrop):
+            return False
+        effect = DROPEFFECT_MOVE if cut else DROPEFFECT_COPY
+        handle = _global_bytes(effect.to_bytes(4, "little"))
+        if handle is not None:
+            user32.SetClipboardData(_drop_effect_format(), handle)
+        return True
+    finally:
+        user32.CloseClipboard()
+
+
+def get_clipboard_files(hwnd: int):
+    """``(paths, cut)`` from the clipboard's CF_HDROP, or None when it holds
+    no files."""
+    if not user32.OpenClipboard(hwnd):
+        return None
+    try:
+        hdrop = user32.GetClipboardData(CF_HDROP)
+        if not hdrop:
+            return None
+        count = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+        paths = []
+        for i in range(count):
+            length = shell32.DragQueryFileW(hdrop, i, None, 0)
+            buf = ctypes.create_unicode_buffer(length + 1)
+            shell32.DragQueryFileW(hdrop, i, buf, length + 1)
+            if buf.value:
+                paths.append(buf.value)
+        cut = False
+        handle = user32.GetClipboardData(_drop_effect_format())
+        if handle:
+            ptr = kernel32.GlobalLock(handle)
+            if ptr:
+                try:
+                    cut = bool(ctypes.c_uint32.from_address(ptr).value & DROPEFFECT_MOVE)
+                finally:
+                    kernel32.GlobalUnlock(handle)
+        return (paths, cut) if paths else None
+    finally:
+        user32.CloseClipboard()
+
+
+def clipboard_sequence() -> int:
+    return int(user32.GetClipboardSequenceNumber())
+
+
 # --- shell (open URL / file) -------------------------------------------------
 
 shell32.ShellExecuteW.restype = ctypes.c_void_p

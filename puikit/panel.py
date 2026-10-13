@@ -2617,6 +2617,28 @@ class Panel:
         ``Backend.set_clipboard_rich``)."""
         self.backend.set_clipboard_rich(text, html=html, rtf=rtf)
 
+    # --- file clipboard -------------------------------------------------------
+
+    def set_clipboard_files(self, paths: Any, *, cut: bool = False) -> bool:
+        """Put files on the OS clipboard so Finder / Explorer (or any app) can
+        paste them; ``cut`` asks for a move where the platform supports it.
+        Returns True if they reached the OS clipboard. On a backend without
+        ``clipboard_files`` (a terminal, Linux) this returns False and changes
+        nothing — the app keeps its own file clipboard, and never branches."""
+        return bool(self.backend.set_clipboard_files([str(p) for p in paths], cut))
+
+    def get_clipboard_files(self) -> Any:
+        """The files on the OS clipboard as a
+        :class:`~puikit.clipboard.ClipboardFiles`, or None (none there, or no
+        OS file clipboard on this backend)."""
+        return self.backend.get_clipboard_files()
+
+    def clipboard_change_count(self) -> int | None:
+        """Changes whenever anything writes the OS clipboard; compare it with
+        the value just after your own write to know whether another
+        application has replaced it. None without an OS file clipboard."""
+        return self.backend.clipboard_change_count()
+
     # --- open a URL -----------------------------------------------------------
 
     def open_url(self, url: str) -> bool:

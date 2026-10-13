@@ -170,6 +170,61 @@ def test_scrollbar_when_overflowing(backend):
     assert view._wrap_width == 23
 
 
+_SIZED_DOC = (
+    "# Title\n\n"
+    "a paragraph long enough to wrap at this width\n\n"
+    "| A | B |\n|---|--:|\n| one | 1 |\n| two | 2 |\n"
+)
+
+
+@pytest.mark.parametrize("make", [
+    lambda: MemoryBackend(width=24, height=40, capabilities=PROFILE_TUI),
+    lambda: MemoryBackend(width=24, height=40, capabilities=PROFILE_GUI_DESKTOP),
+    lambda: _VectorBackend(width=24, height=40),
+], ids=["tui", "gui", "vector"])
+def test_measure_is_the_height_draw_lays_out(make):
+    """Measured before any draw, the height is exactly what the view then lays
+    out at that width — so a view sized to it shows everything, no scrollbar."""
+    from puikit.layout import SizeRequest
+
+    backend = make()
+    panel = Panel(backend)
+    view = MarkdownView(_SIZED_DOC)
+    req = view.measure(panel.layout_context(), "y", 24.0)
+    h = req.preferred
+    assert h > 6  # heading, wrapped paragraph and the table all count
+    assert req.max == h and 0 < req.min <= h
+    assert view.measure(panel.layout_context(), "x", 8.0) == SizeRequest()
+    panel.add(view, x=0, y=0, w=24, h=h)
+    panel.render()
+    assert view._wrap_width == 24  # no gutter reserved for a scrollbar
+    assert view._row_tops[-1] == pytest.approx(h)
+
+
+@pytest.mark.parametrize("profile", [PROFILE_TUI, PROFILE_GUI_DESKTOP], ids=["tui", "gui"])
+def test_measure_sizes_a_content_item_in_a_split(profile):
+    from puikit import Item, VSplit
+    from puikit.widgets import Label
+
+    panel = Panel(MemoryBackend(width=24, height=40, capabilities=profile))
+    view = MarkdownView(_SIZED_DOC)
+    panel.set_layout(VSplit(Item(view, size="content"), Item(Label(""), weight=1)))
+    panel.render()
+    assert view._row_tops[-1] == pytest.approx(view._view_h)
+
+
+def test_measure_leaves_the_view_on_screen_alone(backend):
+    panel = Panel(backend)
+    view = MarkdownView(_SIZED_DOC)
+    panel.add(view, x=0, y=0, w=24, h=8)
+    panel.render()
+    rows, tops, width = view._rows, list(view._row_tops), view._wrap_width
+    narrow = view.measure(panel.layout_context(), "y", 12.0).preferred
+    assert narrow > tops[-1]  # narrower wraps taller
+    assert view._rows is rows and view._row_tops == tops
+    assert view._wrap_width == width
+
+
 def test_empty_source_is_safe(backend):
     panel = Panel(backend)
     panel.add(MarkdownView(""), x=0, y=0, w=24, h=8)

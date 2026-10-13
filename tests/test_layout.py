@@ -416,3 +416,54 @@ def test_panel_layout_pixel_vs_snap():
     panel.set_layout(HSplit(*probes_tui))
     panel.render()
     assert [p.size_units[0] for p in probes_tui] == [3, 4, 3]
+
+
+# --- Panel.layout_context: measuring the way a draw does ------------------------
+
+class _StyleSpyBackend(MemoryBackend):
+    """Records the styles its measurers are handed."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.seen = []
+
+    def measure_text(self, text, style=Style()):
+        self.seen.append(style)
+        return super().measure_text(text, style)
+
+
+def test_layout_context_measures_a_fontless_style_in_the_ui_font():
+    """A style naming no font is drawn in the proportional UI font on a GUI, so
+    it must be measured in it too — not handed to the backend font-less."""
+    backend = _StyleSpyBackend(width=40, height=10, capabilities=PROFILE_GUI_DESKTOP)
+    Panel(backend).layout_context().measure_text("label")
+    assert backend.seen[-1].font == Font()
+
+
+def test_layout_context_folds_fonts_a_grid_cannot_render():
+    from puikit import PROFILE_TUI, TextAttribute
+    from puikit.font import FontWeight
+
+    backend = _StyleSpyBackend(width=40, height=10, capabilities=PROFILE_TUI)
+    lc = Panel(backend).layout_context()
+    lc.measure_text("x", Style(font=Font(weight=FontWeight.BOLD)))
+    folded = backend.seen[-1]
+    assert folded.font is None and folded.attr & TextAttribute.BOLD
+
+
+def test_layout_context_is_the_same_inside_and_outside_a_draw():
+    backend = MemoryBackend(width=40, height=10, capabilities=PROFILE_GUI_DESKTOP)
+    panel = Panel(backend)
+    seen = {}
+
+    class Probe(Widget):
+        def draw(self, ctx):
+            seen["lc"] = ctx.layout_context()
+
+    panel.add(Probe(), x=0, y=0, w=10, h=2)
+    panel.render()
+    outside, inside = panel.layout_context(), seen["lc"]
+    for name in ("base_w", "base_h", "snap", "hairline", "vector_shapes",
+                 "base_pixel_w", "base_pixel_h", "scrollbar_units"):
+        assert getattr(outside, name) == getattr(inside, name), name
+    assert outside.measure_text("abc") == inside.measure_text("abc")

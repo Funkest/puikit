@@ -35,6 +35,60 @@ _CARET_BLINK = 0.53
 # base_font, which never reads a Style (docs/font_system.md §3).
 _DEFAULT_UI_FONT = Font()
 
+
+def fold_font(style: Style, caps: CapabilityProfile) -> Style:
+    """The font half of the seam every Style crosses before the backend sees
+    it (``DrawContext._resolve``), shared with measurement so text is measured
+    in the face it is drawn in: a style naming no font takes the proportional
+    UI font where the backend lays text out proportionally, and a font the
+    backend cannot render folds down to bold/italic attributes
+    (docs/font_system.md §6)."""
+    attr = style.attr
+    font = style.font
+    if font is None and caps.supports("proportional_text"):
+        # GUI default: text that names no font flows in the proportional UI
+        # font rather than the monospaced base grid font, so widgets read
+        # native by default. Widgets that need a fixed advance pin a
+        # monospace Font and never reach here (docs/font_system.md §5).
+        font = _DEFAULT_UI_FONT
+    elif font is not None and not caps.supports("fonts"):
+        if font.weight >= FontWeight.SEMI_BOLD:
+            attr |= TextAttribute.BOLD
+        if font.slant is FontSlant.ITALIC:
+            attr |= TextAttribute.ITALIC
+        font = None
+    if (attr, font) == (style.attr, style.font):
+        return style
+    return replace(style, attr=attr, font=font)
+
+
+def _layout_context(backend: Backend, caps: CapabilityProfile | None = None) -> "Any":
+    """The LayoutContext for ``backend``: its base unit, the base-unit vs pixel
+    rules, and its measurers behind the same font fold a draw applies. The one
+    place one is built — the Panel's top-level layout, ``Panel.layout_context``
+    and ``DrawContext.layout_context`` all come here, so a widget measures the
+    same way wherever it is asked."""
+    from .layout import LayoutContext
+
+    caps = caps if caps is not None else backend.capabilities
+    cw, ch = backend.base_size
+    pw, ph = backend.base_pixel_size
+    return LayoutContext(
+        cw, ch,
+        snap=not caps.supports("pixel_layout"),
+        hairline=caps.supports("hairline"),
+        native_menus=caps.supports("native_menus"),
+        measure=backend.measure_text,
+        line_height=backend.measure_line_height,
+        metrics=backend.font_metrics,
+        scrollbar_units=backend.scrollbar_units,
+        image_size=backend.image_size,
+        base_pixel_w=pw, base_pixel_h=ph,
+        fold=lambda style: fold_font(style, caps),
+        font_size=backend.measure_font_size,
+        vector_shapes=caps.supports("vector_shapes"),
+    )
+
 # Checkbox / radio mark box side as a fraction of min(line_height, 2*advance).
 # >1.0 makes the mark a touch larger than a single base-unit cell, so widgets
 # that stack marks (RadioGroup) must reserve more than one row of pitch — see
@@ -212,20 +266,8 @@ class DrawContext:
         §6) — weight/slant become bold/italic attributes, the rest is dropped."""
         bg = self._background if (self._background is not None and style.bg is None) else style.bg
         fg = style.fg
-        attr = style.attr
-        font = style.font
-        if font is None and self._caps.supports("proportional_text"):
-            # GUI default: text that names no font flows in the proportional UI
-            # font rather than the monospaced base grid font, so widgets read
-            # native by default. Widgets that need a fixed advance pin a
-            # monospace Font and never reach here (docs/font_system.md §5).
-            font = _DEFAULT_UI_FONT
-        elif font is not None and not self._caps.supports("fonts"):
-            if font.weight >= FontWeight.SEMI_BOLD:
-                attr |= TextAttribute.BOLD
-            if font.slant is FontSlant.ITALIC:
-                attr |= TextAttribute.ITALIC
-            font = None
+        folded = fold_font(style, self._caps)
+        attr, font = folded.attr, folded.font
         if not self._caps.supports("transparency"):
             # No per-pixel compositing: flatten any RGBA color over the pane
             # background (bg over the pane, fg over the resolved bg) to the
@@ -516,23 +558,10 @@ class DrawContext:
     def layout_context(self) -> "Any":
         """Build a LayoutContext matching this backend's capabilities, so a
         widget can resolve a nested puikit.layout Split against its own rect
-        with the same base unit-vs-pixel rules the Panel uses for the top level.
-        Capability resolution stays here, not in the widget."""
-        from .layout import LayoutContext
-
-        cw, ch = self._backend.base_size
-        pw, ph = self._backend.base_pixel_size
-        return LayoutContext(
-            cw, ch,
-            snap=not self._caps.supports("pixel_layout"),
-            hairline=self._caps.supports("hairline"),
-            native_menus=self._caps.supports("native_menus"),
-            measure=self._backend.measure_text,
-            line_height=self._backend.measure_line_height,
-            scrollbar_units=self._backend.scrollbar_units,
-            image_size=self._backend.image_size,
-            base_pixel_w=pw, base_pixel_h=ph,
-        )
+        with the same base unit-vs-pixel rules the Panel uses for the top level,
+        or measure a child the way it will draw. Capability resolution stays
+        here, not in the widget."""
+        return _layout_context(self._backend, self._caps)
 
     def line_height(self, style: Style = DEFAULT_STYLE) -> float:
         """Row pitch of ``style``'s font in this pane's unit: one base unit for
@@ -1590,25 +1619,10 @@ class Panel:
         self._apply_layout()
 
     def _apply_layout(self) -> None:
-        from .layout import LayoutContext
-
         # size_units is exact (fractional on pixel-layout backends), so the
         # layout tracks window resizes pixel by pixel, not base unit by base unit.
         sw, sh = self.backend.size_units
-        cw, ch = self.backend.base_size
-        pw, ph = self.backend.base_pixel_size
-        snap = not self.backend.capabilities.supports("pixel_layout")
-        ctx = LayoutContext(
-            cw, ch, snap,
-            hairline=self.backend.capabilities.supports("hairline"),
-            native_menus=self.backend.capabilities.supports("native_menus"),
-            measure=self.backend.measure_text,
-            line_height=self.backend.measure_line_height,
-            metrics=self.backend.font_metrics,
-            scrollbar_units=self.backend.scrollbar_units,
-            image_size=self.backend.image_size,
-            base_pixel_w=pw, base_pixel_h=ph,
-        )
+        ctx = self.layout_context()
         placements = self._layout.resolve(0.0, 0.0, sw, sh, ctx)
         self._dividers = list(ctx.dividers)
         focused = self._focused
@@ -1674,6 +1688,13 @@ class Panel:
         key handling is outside ``dispatch_event`` can consult this to defer to
         the active layer instead of acting on the key itself."""
         return bool(self._layers)
+
+    def layout_context(self) -> "Any":
+        """A LayoutContext for this Panel's backend — what the top-level layout
+        resolves with and what a draw's ``ctx.layout_context()`` returns — for
+        measuring outside a draw: sizing a layer to its content before
+        ``push_layer``, say, through the content's own ``measure``."""
+        return _layout_context(self.backend)
 
     def _layer_rect(self, hints: dict[str, Any]) -> Rect:
         # Center within the backend's exact (fractional) base unit extent, dividing

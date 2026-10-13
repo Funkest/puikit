@@ -157,6 +157,20 @@ LayoutContext(base_w, base_h, snap, hairline=False,
 - `measure` / `scrollbar_units` — the backend's measurement hooks, so an
   intrinsic widget can size itself (§6) without the layout ever touching the
   backend.
+- `fold` — the font half of the seam every drawn Style crosses
+  (`panel.fold_font`), applied by every `measure_*` method: a style naming no
+  font is measured in the proportional UI font on a GUI and a font the backend
+  cannot render folds to bold/italic, so text is measured in the face it is
+  drawn in. `font_size` (read through `measure_font_size`) and `vector_shapes`
+  complete what a widget needs to lay itself out exactly as its draw will — a
+  Markdown table's border rows, say, take a cell each on a grid and next to
+  nothing on a vector backend.
+
+There is one way to get a context: `Panel.layout_context()` (also what a draw's
+`ctx.layout_context()` returns, and what the Panel's own top-level layout
+resolves with). A widget sizing something *outside* a layout — a dialog fitting
+its box to its content before `push_layer` — asks the content's `measure` with
+it, rather than estimating rows.
 
 The subtle part is **boundary anchoring**. Each item's start is anchored to
 the *previous item's already-rounded end* plus the rounded spacing — not

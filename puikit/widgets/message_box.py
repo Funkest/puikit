@@ -340,11 +340,7 @@ def show_message_box(
     # layout uses for a content button), so the box is exactly wide enough for
     # the row it draws.
     caps = panel.backend.capabilities
-    lc = LayoutContext(
-        *panel.backend.base_size,
-        snap=not caps.supports("pixel_layout"),
-        measure=panel.backend.measure_text,
-    )
+    lc = panel.layout_context()
     btn_widths, btn_h = box._row_metrics(lc)
     label_w = sum(btn_widths) + _BUTTON_GAP * (len(btn_widths) - 1)
     content_w = max(

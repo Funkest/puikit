@@ -120,5 +120,23 @@ Receiving files/text dropped *onto* the app is the mirror image and is tracked
 separately by `drag_and_drop`. GUI backends register the view as a drag
 *destination* and deliver a drop as an event; the terminal's only related
 behavior is that many emulators paste a dropped file's path as ordinary text
-input (arriving as `KEY`/paste, not a positioned drop). This document covers the
-drag-*out* side; drop-in handling is future work.
+input (arriving as `KEY`/paste, not a positioned drop).
+
+A drop arrives as a positioned `FILE_DROP` event that the Panel routes to the
+widget under the drop point. It carries:
+
+- `hints["paths"]`: the dropped files, as local paths.
+- `hints["operation"]`: what the user asked for with the platform's drag
+  modifiers, or `None` when no modifier was held.
+- `modifiers`: the keys held at the drop.
+
+| Platform | Copy | Move | Link (alias / shortcut) |
+|---|---|---|---|
+| macOS | Option | Command | Command+Option |
+| Windows | Ctrl | Shift | Ctrl+Shift, or Alt |
+
+With no modifier the operation is `None`, because the right default depends on
+where the files land. Finder and Explorer move within one volume and copy
+across volumes, and only the app knows the target directory. While the user
+hovers, the cursor badge shows the operation the held keys ask for, and a copy
+otherwise. The rules are pure functions in `puikit/backends/_drop_policy.py`.

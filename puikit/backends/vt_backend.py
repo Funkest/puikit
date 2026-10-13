@@ -962,6 +962,8 @@ class VTBackend(Backend):
             return [Event(EventType.MOUSE_SCROLL, x=x, y=y, scroll=notches,
                           modifiers=mods, hints=hints)]
         button = record.get("button") or "left"
+        if action == "click":
+            return [Event(EventType.MOUSE_CLICK, x=x, y=y, button=button, modifiers=mods)]
         if action == "down":
             return [Event(EventType.MOUSE_DOWN, x=x, y=y, button=button, modifiers=mods)]
         if action == "up":

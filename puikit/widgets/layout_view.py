@@ -104,7 +104,7 @@ class LayoutView(FocusContainer, Widget):
         if event.type in (
             EventType.MOUSE_DOWN, EventType.MOUSE_UP,
             EventType.MOUSE_CLICK, EventType.MOUSE_DRAG, EventType.MOUSE_SCROLL,
-            EventType.FILE_DROP,
+            EventType.FILE_DROP, EventType.FILE_DRAG_OVER,
         ):
             # The drag and release belong to the child the press began in, not to
             # whatever the pointer has since crossed — the same capture rule the

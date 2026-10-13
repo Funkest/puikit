@@ -37,6 +37,10 @@ from .dragbar import DragBar
 _HANDLE_UNITS = 1.0   # grid: one whole cell
 _HANDLE_PX = 1.0      # vector: device pixels of visible line at rest
 _HANDLE_HOVER_PX = 3.0  # vector: thicker accent line while hovered / dragging
+#: How far (base units) a press on a grab band may wander and still be a click
+#: on the child under it rather than a resize.
+_BAND_CLICK_SLOP = 0.5
+
 # Extra grab/hover margin on each side of the handle. On a grid the cell itself
 # is the target, so a whole-unit margin keeps it easy to hit; on a vector backend
 # the margin is a few device pixels — close to the visible line, not a full base
@@ -102,6 +106,12 @@ class Splitter(FocusContainer, Widget):
         # ``grab_*`` band doesn't snap the boundary under the pointer), hover dwell,
         # and the neutral band brighten. See ``DragBar``.
         self._drag = DragBar()
+        #: A press on a grab band that lies over a child (``grab_first`` /
+        #: ``grab_second``): where it began, and whether the pointer has since
+        #: moved far enough to be a resize. A band press that never moved is a
+        #: click on that child.
+        self._band_press: tuple[float, float] | None = None
+        self._band_moved = False
         # Which pane a press went to: the rest of that gesture keeps reaching it
         # even once the pointer has crossed into the other pane or left the
         # splitter entirely (see MouseCapture). Stores "first"/"second" rather
@@ -277,7 +287,7 @@ class Splitter(FocusContainer, Widget):
         if event.type in (
             EventType.MOUSE_DOWN, EventType.MOUSE_UP,
             EventType.MOUSE_CLICK, EventType.MOUSE_DRAG, EventType.MOUSE_SCROLL,
-            EventType.FILE_DROP,
+            EventType.FILE_DROP, EventType.FILE_DRAG_OVER,
         ):
             return self._handle_mouse(event)
         # Key events go to the focused child (Tab traversal is the Panel's job).
@@ -297,12 +307,40 @@ class Splitter(FocusContainer, Widget):
         ):
             if not self._drag.dragging:
                 self._begin_drag(x, y)
+            if self._band_press is not None and x is not None and (
+                    abs(x - self._band_press[0]) + abs(y - self._band_press[1])
+                    >= _BAND_CLICK_SLOP):
+                self._band_moved = True
             self._drag_to(x, y)
             return True
+        if event.type is EventType.MOUSE_CLICK and self._band_moved:
+            # The press on the band became a resize: its release is no click.
+            self._band_press = None
+            self._band_moved = False
+            return True
         if event.type is EventType.MOUSE_DOWN:
+            self._band_press = None
+            self._band_moved = False
             if on_handle:
                 self._begin_drag(x, y)
                 self._drag_to(x, y)
+                # A grab band lies over a child (a footer that reads as the
+                # divider): the press is that child's too, so the containers
+                # inside it see where this gesture began — without it, a
+                # container still holding an earlier press elsewhere sends the
+                # release and the click there — and a press that never moves is
+                # a click on the child.
+                for name, child, rect in (
+                    ("first", self.first, self._first_rect),
+                    ("second", self.second, self._second_rect),
+                ):
+                    if x is not None and rect.contains(x, y):
+                        self._band_press = (x, y)
+                        self._capture.press(name)
+                        child.handle_event(event.translated(-rect.x, -rect.y))
+                        break
+                else:
+                    self._capture.press(None)
                 return True
             self._drag.end()  # a press elsewhere ends any drag
         if event.type is EventType.MOUSE_UP:

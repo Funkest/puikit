@@ -141,6 +141,16 @@ across volumes, and only the app knows the target directory. While the user
 hovers, the cursor badge shows the operation the held keys ask for, and a copy
 otherwise. The rules are pure functions in `puikit/backends/_drop_policy.py`.
 
+While the user hovers, the backend also sends a positioned `FILE_DRAG_OVER`
+event with the same `paths`, `operation` and `modifiers`. It asks what a drop
+at that point would do. The widget under the pointer answers by setting
+`hints["effect"]` to `"copy"`, `"move"`, `"link"`, or `"none"` (refuse), and
+the cursor badge then shows that answer. For example, a file list that moves
+within one volume shows a move for an unmodified drag. If no widget answers,
+the badge falls back to the modifier rule above. The event arrives on every
+pointer move, so the answer must be cheap, and the event does not ask for a
+repaint.
+
 ## The file clipboard (`clipboard_files`)
 
 Copy and paste of *files* between applications (Finder's and Explorer's

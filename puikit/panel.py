@@ -2799,6 +2799,7 @@ class Panel:
         if event.type in (
             EventType.MOUSE_CLICK, EventType.MOUSE_DOWN, EventType.MOUSE_UP,
             EventType.MOUSE_DRAG, EventType.MOUSE_SCROLL, EventType.FILE_DROP,
+            EventType.FILE_DRAG_OVER,
         ):
             # A drag/release belongs to the slot the press began on, so a gesture
             # that wanders off its origin (a button drag-off, a selection drag

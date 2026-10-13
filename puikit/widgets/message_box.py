@@ -5,8 +5,8 @@ shadow + dim_below intent the demo dialogs use, so GUI raises it with a real
 drop shadow over a dimmed page and TUI falls back to draw order — one modal,
 every backend. The box shows an icon, a title, a (multi-line) message, and a
 row of buttons; left/right or tab move between buttons, enter/space activates
-the focused one, escape picks the cancel button, and a click activates a
-button directly. It pops itself and reports the chosen label through
+the focused one, escape picks the cancel button (or does nothing when the
+box is not ``dismissable``), and a click activates a button directly. It pops itself and reports the chosen label through
 ``on_result``.
 """
 
@@ -56,6 +56,7 @@ class MessageBox:
         cancel: int | None = None,
         on_result: Callable[[str], None] | None = None,
         markdown: bool = False,
+        dismissable: bool = True,
     ):
         self.message = message
         self.title = title
@@ -73,6 +74,9 @@ class MessageBox:
         self.default = max(0, min(default, len(self.buttons) - 1))
         self.focused = self.default
         self.cancel = cancel if cancel is not None else len(self.buttons) - 1
+        # False for a question that must be answered: every button is an
+        # answer, none is Cancel, so escape does nothing.
+        self.dismissable = dismissable
         self.on_result = on_result
         self._panel: Any = None
         # The row of buttons rendered as real Button widgets, so the message box
@@ -242,7 +246,8 @@ class MessageBox:
             elif event.key in ("right", "down", "tab"):
                 self.focused = (self.focused + 1) % n
             elif event.key == "escape":
-                self._close(self.cancel)
+                if self.dismissable:
+                    self._close(self.cancel)
             else:
                 # enter / space activate the focused button — delegated so the
                 # same on_click path a mouse takes fires (one activation seam).
@@ -276,6 +281,7 @@ def show_message_box(
     z: int = 70,
     dim_below: bool = False,
     markdown: bool = False,
+    dismissable: bool = True,
 ) -> MessageBox:
     """Push a modal MessageBox layer over ``panel`` and return it.
 
@@ -291,10 +297,14 @@ def show_message_box(
     through the Panel (``os_open`` backends launch the browser; TUI copies it).
     Separate visual lines with a blank line (a paragraph break) or end a line
     with a backslash (a hard break), since consecutive non-blank lines otherwise
-    fold into one wrapped paragraph."""
+    fold into one wrapped paragraph.
+
+    Pass ``dismissable=False`` for a question that must be answered: escape
+    then does nothing, and only a button closes the box."""
     box = MessageBox(
         message, title=title, buttons=buttons, icon=icon,
         default=default, cancel=cancel, on_result=on_result, markdown=markdown,
+        dismissable=dismissable,
     )
     # Size the box to the text as it will actually render: measure through the
     # backend with the proportional UI font (the GUI default) — the title bold,

@@ -64,6 +64,22 @@ def test_message_box_escape_picks_cancel(backend):
     assert panel._layers == []
 
 
+def test_a_question_that_must_be_answered_ignores_escape(backend):
+    results = []
+    panel = Panel(backend)
+    box = show_message_box(
+        panel, "Which?", buttons=("A", "B"), on_result=results.append,
+        dismissable=False,
+    )
+    panel.render()
+    panel.dispatch_event(_key("escape"))
+    assert results == []
+    assert [slot.widget for slot in panel._layers] == [box]
+    panel.dispatch_event(_key("enter"))
+    assert results == ["A"]
+    assert panel._layers == []
+
+
 def test_message_box_focus_brackets_symmetric_on_tui():
     # An odd-width box (sized to its message) centering an even-width button row
     # gives the row a half-unit origin; a whole-unit backend rounds each draw

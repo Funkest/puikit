@@ -36,6 +36,15 @@ class EventType(str, Enum):
     # Finder and Explorer do) to the app, which knows where the drop lands.
     # ``modifiers`` holds the keys held at the drop.
     FILE_DROP = "file_drop"
+    # Files dragged over a widget, before any drop: positioned like FILE_DROP,
+    # with the same ``hints["paths"]``, ``hints["operation"]`` and
+    # ``modifiers``. It asks what dropping here would do, so the cursor badge
+    # can say so: a widget that knows answers by setting ``hints["effect"]`` to
+    # "copy", "move", "link" or "none" (refused). Unanswered, the backend shows
+    # the operation the modifiers ask for, else a copy. Sent on every pointer
+    # move during the drag, so an answer must be cheap; it is not a request to
+    # repaint.
+    FILE_DRAG_OVER = "file_drag_over"
     IME_COMPOSITION = "ime_composition"
     RESIZE = "resize"
 

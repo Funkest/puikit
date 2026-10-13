@@ -143,3 +143,70 @@ def test_macos_side_and_middle_buttons():
         (EventType.MOUSE_DOWN, "middle"),
         (EventType.MOUSE_UP, "middle"),
     ]
+
+
+# --- the drag-over query: the target says what a drop would do --------------
+
+def test_panel_routes_the_drag_over_query_to_the_widget_under_it():
+    from puikit.backends import create_backend
+    from puikit.layout import Item, VSplit
+    from puikit.panel import Panel
+    from puikit.event import Event
+    from puikit.widgets.base import Widget
+
+    class Target(Widget):
+        def __init__(self, answer):
+            self.answer = answer
+            self.seen = []
+
+        def draw(self, ctx):
+            pass
+
+        def handle_event(self, event):
+            if event.type is EventType.FILE_DRAG_OVER:
+                self.seen.append(event.hints["paths"])
+                event.hints["effect"] = self.answer
+            return False
+
+    backend = create_backend("memory")
+    backend.open()
+    panel = Panel(backend)
+    top, bottom = Target("move"), Target("none")
+    panel.set_layout(VSplit(Item(top, weight=1), Item(bottom, weight=1)))
+    panel.render()
+    query = Event(type=EventType.FILE_DRAG_OVER, x=2, y=1,
+                  hints={"paths": ["/a"], "operation": None})
+    panel.dispatch_event(query)
+    assert query.hints["effect"] == "move" and top.seen == [["/a"]]
+    query = Event(type=EventType.FILE_DRAG_OVER, x=2, y=20,
+                  hints={"paths": ["/a"], "operation": None})
+    panel.dispatch_event(query)
+    assert query.hints["effect"] == "none"
+    backend.close()
+
+
+@macos
+def test_macos_badge_follows_the_target_s_answer():
+    from AppKit import (NSDragOperationCopy, NSDragOperationMove,
+                        NSDragOperationNone)
+    view, seen = _view()
+    view._dropped_paths = lambda sender: ["/x/a.txt"]
+    view._drop_unit = lambda sender: (1.0, 2.0)
+    view._allowed_operation = lambda sender: None
+
+    class Sender:
+        def draggingSourceOperationMask(self):
+            return NSDragOperationCopy | NSDragOperationMove
+
+    def answer(effect):
+        def dispatch(event):
+            if effect is not None:
+                event.hints["effect"] = effect
+        view._pk_dispatch = dispatch
+
+    answer("move")
+    assert view.draggingUpdated_(Sender()) == NSDragOperationMove
+    answer("none")
+    assert view.draggingUpdated_(Sender()) == NSDragOperationNone
+    answer(None)   # nobody answers: the old feedback, a copy
+    assert view.draggingUpdated_(Sender()) == NSDragOperationCopy

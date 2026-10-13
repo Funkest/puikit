@@ -1121,7 +1121,8 @@ class WindowsBackend(Backend):
         self._default_himc = _win32_ime.disable_ime(self._hwnd)
         # OLE must be initialized on this thread before RegisterDragDrop.
         _win32_dragdrop.ensure_ole_initialized()
-        self._drop_target = _win32_dragdrop.register_drop_target(self._hwnd, self._dispatch_file_drop)
+        self._drop_target = _win32_dragdrop.register_drop_target(
+            self._hwnd, self._dispatch_file_drop, self._query_file_drag)
 
         if not self._start_hidden:
             show_cmd = native.SW_SHOW if self._window_style.activates else native.SW_SHOWNA
@@ -3983,6 +3984,18 @@ class WindowsBackend(Backend):
             mods = _key_modifiers()
             for ch in result_text:
                 self._dispatch(char_key_event(ch, mods))
+
+    def _query_file_drag(self, paths: list[str], point: tuple[int, int],
+                         operation: str | None = None,
+                         modifiers: frozenset = frozenset()) -> str | None:
+        """The IDropTarget hover callback: ask the widget under the pointer what
+        a drop there would do (FILE_DRAG_OVER), for the cursor's badge."""
+        px, py = point
+        query = Event(type=EventType.FILE_DRAG_OVER, x=px / self._base_w,
+                      y=py / self._base_h, modifiers=modifiers,
+                      hints={"paths": list(paths), "operation": operation})
+        self._dispatch(query)
+        return query.hints.get("effect")
 
     def _dispatch_file_drop(self, paths: list[str], point: tuple[int, int],
                             operation: str | None = None,

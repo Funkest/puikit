@@ -1372,11 +1372,30 @@ class _PuiKitView(NSView, protocols=[_NS_TEXT_INPUT_CLIENT]):
         for (Finder's: Command moves, Option copies, both make an alias), else
         a copy — the app picks the real default at the drop, knowing the target
         volume, which only it can. Nothing for a drag without files."""
-        if not self._dropped_paths(sender):
+        paths = self._dropped_paths(sender)
+        if not paths:
             return NSDragOperationNone
         op = self._allowed_operation(sender)
-        return {"move": NSDragOperationMove, "link": NSDragOperationLink}.get(
-            op, NSDragOperationCopy)
+        # Ask the widget under the pointer what it would do with these files
+        # here: only it knows the target — whether it is on the same volume
+        # (the default move), or takes no drop at all.
+        x, y = self._drop_unit(sender)
+        query = Event(type=EventType.FILE_DRAG_OVER, x=x, y=y,
+                      modifiers=_modifier_names(NSEvent.modifierFlags()),
+                      hints={"paths": paths, "operation": op})
+        self._pk_dispatch(query)
+        effect = query.hints.get("effect") or op
+        if effect == "none":
+            return NSDragOperationNone
+        flag = {"move": NSDragOperationMove, "link": NSDragOperationLink}.get(
+            effect, NSDragOperationCopy)
+        try:
+            mask = int(sender.draggingSourceOperationMask())
+        except Exception:  # noqa: BLE001
+            return flag
+        if mask & flag:
+            return flag
+        return NSDragOperationCopy if mask & NSDragOperationCopy else NSDragOperationNone
 
     def _allowed_operation(self, sender) -> str | None:
         """What the held modifiers ask for, if the drag's source allows it —

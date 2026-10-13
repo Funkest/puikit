@@ -306,8 +306,10 @@ class DropTarget:
             hwnd = _drop_target_hwnds.get(id(self), 0)
             screen_pt = wintypes.POINT(pt.x, pt.y)  # DragEnter/Over/Drop report screen coords
             user32.ScreenToClient(hwnd, ctypes.byref(screen_pt))
-            self._on_drop(paths, (screen_pt.x, screen_pt.y),
-                          drop_operation_windows(grf_key_state),
+            op = drop_operation_windows(grf_key_state)
+            if op is not None and allowed and not allowed & _DROP_EFFECT_BY_OP[op]:
+                op = None  # the source does not allow it: the default decides
+            self._on_drop(paths, (screen_pt.x, screen_pt.y), op,
                           drop_modifiers_windows(grf_key_state))
         return 0
 

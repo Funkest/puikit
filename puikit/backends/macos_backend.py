@@ -1374,9 +1374,24 @@ class _PuiKitView(NSView, protocols=[_NS_TEXT_INPUT_CLIENT]):
         volume, which only it can. Nothing for a drag without files."""
         if not self._dropped_paths(sender):
             return NSDragOperationNone
-        op = drop_operation_macos(_modifier_names(NSEvent.modifierFlags()))
+        op = self._allowed_operation(sender)
         return {"move": NSDragOperationMove, "link": NSDragOperationLink}.get(
             op, NSDragOperationCopy)
+
+    def _allowed_operation(self, sender) -> str | None:
+        """What the held modifiers ask for, if the drag's source allows it —
+        a source offering only copy (a mail attachment, say) is not moved
+        because Command was down. None for no request, or one refused."""
+        op = drop_operation_macos(_modifier_names(NSEvent.modifierFlags()))
+        flag = {"move": NSDragOperationMove, "link": NSDragOperationLink,
+                "copy": NSDragOperationCopy}.get(op)
+        if flag is None:
+            return None
+        try:
+            mask = int(sender.draggingSourceOperationMask())
+        except Exception:  # noqa: BLE001 — a sender without one: trust the keys
+            return op
+        return op if mask & flag else None
 
     def draggingEntered_(self, sender):
         # Reject a drag that carries no files, so the cursor shows it won't be
@@ -1397,7 +1412,7 @@ class _PuiKitView(NSView, protocols=[_NS_TEXT_INPUT_CLIENT]):
         mods = _modifier_names(NSEvent.modifierFlags())
         self._pk_dispatch(
             Event(type=EventType.FILE_DROP, x=x, y=y, modifiers=mods,
-                  hints={"paths": paths, "operation": drop_operation_macos(mods)})
+                  hints={"paths": paths, "operation": self._allowed_operation(sender)})
         )
         return True
 

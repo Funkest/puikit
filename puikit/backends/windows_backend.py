@@ -3291,6 +3291,22 @@ class WindowsBackend(Backend):
     def set_clipboard(self, text: str) -> None:
         native.set_clipboard_text(self._hwnd, text)
 
+    # --- file clipboard (capability "clipboard_files") ---------------------------
+
+    def set_clipboard_files(self, paths: list[str], cut: bool = False) -> bool:
+        return native.set_clipboard_files(self._hwnd, paths, cut)
+
+    def get_clipboard_files(self):
+        from ..clipboard import ClipboardFiles
+        found = native.get_clipboard_files(self._hwnd)
+        if not found:
+            return None
+        paths, cut = found
+        return ClipboardFiles(tuple(paths), cut)
+
+    def clipboard_change_count(self) -> int | None:
+        return native.clipboard_sequence()
+
     def open_url(self, url: str) -> bool:
         return native.shell_open(url)
 

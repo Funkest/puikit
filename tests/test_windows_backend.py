@@ -787,6 +787,39 @@ def test_begin_file_drag_returns_false_for_empty_paths():
         backend.close()
 
 
+# --- file clipboard (CF_HDROP) ------------------------------------------------
+
+
+def test_dropfiles_payload_layout():
+    data = native.dropfiles_bytes(["C:\\a.txt", "C:\\b b.txt"])
+    p_files, x, y, f_nc, f_wide = struct.unpack("<IiiII", data[:20])
+    assert (p_files, f_wide) == (20, 1)
+    assert data[20:].decode("utf-16-le") == "C:\\a.txt\0C:\\b b.txt\0\0"
+
+
+def test_file_clipboard_round_trip(tmp_path):
+    """Writes the real clipboard: what Explorer would paste, and what an
+    Explorer Cut reads back as."""
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_text("a")
+    b.write_text("b")
+    # A window owns what it writes: opened with no owner, EmptyClipboard
+    # leaves the clipboard ownerless and SetClipboardData then fails.
+    backend = WindowsBackend()
+    backend.open()
+    try:
+        before = backend.clipboard_change_count()
+        assert backend.set_clipboard_files([str(a), str(b)], cut=True)
+        assert backend.clipboard_change_count() != before
+        got = backend.get_clipboard_files()
+        assert (got.paths, got.cut) == ((str(a), str(b)), True)
+        backend.set_clipboard_files([str(a)])
+        got = backend.get_clipboard_files()
+        assert (got.paths, got.cut) == ((str(a),), False)
+    finally:
+        backend.close()
+
+
 def test_premultiply_bgra_matches_reference():
     """Premultiplied output must equal channel*alpha//255 for every pixel."""
     import random

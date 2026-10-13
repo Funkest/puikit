@@ -9,6 +9,7 @@ from .backend import (
     WindowHandle,
     WindowStyle,
 )
+from .clipboard import ClipboardFiles
 from .capability import (
     CapabilityProfile,
     PROFILE_GAME,
@@ -36,6 +37,7 @@ from .theme import THEME_GUI, THEME_TUI, Theme, derive_theme, lift, mix, theme_f
 __version__ = "1.8.0"
 __all__ = [
     "Backend",
+    "ClipboardFiles",
     "Shader",
     "Wallpaper",
     "CapabilityNotSupported",

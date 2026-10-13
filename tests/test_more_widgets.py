@@ -485,3 +485,54 @@ def test_combobox_space_types_not_commits(backend):
     panel.dispatch_event(_key("space", char=" "))
     assert combo.open is True            # still open: space is a character
     assert combo._field.text == " "
+
+
+def test_a_click_on_a_grab_band_reaches_the_bar_under_it():
+    """A band over a child (a footer that reads as the divider) is grabbable,
+    but a press there that never moves is a click on that child — even after
+    an earlier press elsewhere in the same container, which used to keep the
+    release and the click for itself (xefm#589: the pane footer under
+    ``grab_first`` stopped answering clicks once a file row had been clicked).
+    A press that moves is a resize, and its release is no click."""
+    from puikit.layout import Item, VSplit
+    from puikit.widgets.base import Widget
+    from puikit.widgets.layout_view import LayoutView
+
+    class Recorder(Widget):
+        def __init__(self):
+            self.clicks = 0
+
+        def draw(self, ctx):
+            pass
+
+        def handle_event(self, event):
+            if event.type is EventType.MOUSE_CLICK:
+                self.clicks += 1
+                return True
+            return False
+
+    backend = MemoryBackend(width=40, height=16, capabilities=PROFILE_TUI)
+    panel = Panel(backend)
+    rows, footer, below = Recorder(), Recorder(), Recorder()
+    column = LayoutView(VSplit(Item(rows, weight=1), Item(footer, size=1)))
+    split = Splitter(column, below, orientation="vertical", fraction=0.5,
+                     min_first=2, min_second=2, flat=True, grab_first=1.0)
+    panel.add(split, x=0, y=0, w=30, h=16)
+    panel.render()
+    band_y = split._handle_rect.y - 0.5
+
+    def click(y, drag_to=None):
+        panel.dispatch_event(Event(type=EventType.MOUSE_DOWN, x=5.0, y=y))
+        if drag_to is not None:
+            panel.dispatch_event(Event(type=EventType.MOUSE_DRAG, x=5.0, y=drag_to))
+        panel.dispatch_event(Event(type=EventType.MOUSE_UP, x=5.0, y=drag_to or y))
+
+    click(2.0)                  # a row in the same container first
+    assert rows.clicks == 1
+    click(band_y)               # then the bar on the band
+    assert footer.clicks == 1 and rows.clicks == 1
+
+    before = split.fraction
+    click(band_y, drag_to=band_y - 3)   # a real drag: a resize, no click
+    assert split.fraction != before
+    assert footer.clicks == 1

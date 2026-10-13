@@ -30,7 +30,11 @@ class EventType(str, Enum):
     # ``drag_and_drop`` capability). Positioned like a mouse event (``x``/``y`` in
     # base units, at the drop point); the dropped filesystem paths travel in
     # ``hints["paths"]`` (a list of str). Backends without the capability never
-    # emit it.
+    # emit it. ``hints["operation"]`` is the operation the user asked for with
+    # the platform's drag modifiers — "copy", "move" or "link" — or None when
+    # they held none, leaving the default (same volume: move, else copy, as
+    # Finder and Explorer do) to the app, which knows where the drop lands.
+    # ``modifiers`` holds the keys held at the drop.
     FILE_DROP = "file_drop"
     IME_COMPOSITION = "ime_composition"
     RESIZE = "resize"
@@ -47,7 +51,10 @@ class Event:
     # pixel-layout backends until translated() floors to whole widget-local units.
     x: float | None = None
     y: float | None = None
-    # MOUSE_CLICK / MOUSE_DRAG: "left", "middle", "right"
+    # MOUSE_CLICK / MOUSE_DRAG: "left", "middle", "right"; MOUSE_CLICK also
+    # "back" / "forward" (the side buttons), reported as an atomic click on press.
+    # Every mouse event carries the keyboard ``modifiers`` held with it, on
+    # every backend that can see them.
     button: str | None = None
     # MOUSE_SCROLL: positive = up/away, negative = down/toward (a discrete notch).
     # A precise (trackpad) scroll also carries sub-unit deltas in hints:

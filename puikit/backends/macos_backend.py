@@ -128,6 +128,7 @@ from PyObjCTools import AppHelper
 
 from ..background import Shader, Wallpaper
 from . import _screen_mark
+from ._drop_policy import drop_operation_macos
 from ._metal import HAVE_METAL as _HAS_METAL, MetalBackground, PIXEL_FORMAT as _METAL_PIXEL_FORMAT
 
 try:
@@ -639,6 +640,10 @@ def _modifier_names(modifier_flags: int) -> frozenset[str]:
         )
         if modifier_flags & flag
     )
+
+
+#: ``NSEvent.buttonNumber`` of the buttons past left and right.
+_OTHER_BUTTONS = {2: "middle", 3: "back", 4: "forward"}
 
 
 def translate_key(characters: str, modifier_flags: int = 0) -> Event | None:
@@ -1272,23 +1277,59 @@ class _PuiKitView(NSView, protocols=[_NS_TEXT_INPUT_CLIENT]):
         # started from the mouse event that produced it.
         self._last_mouse_event = ns_event
         x, y = self._mouse_unit(ns_event)
+        mods = _modifier_names(ns_event.modifierFlags())
+        if mods == frozenset({"ctrl"}):
+            # Control-click is the Mac's secondary click: every Mac app opens
+            # its context menu on it, so it arrives as one. Its release is
+            # swallowed so no left click follows.
+            self._ctrl_click = True
+            self._pk_dispatch(Event(type=EventType.MOUSE_CLICK, x=x, y=y,
+                                    button="right"))
+            return
+        self._ctrl_click = False
         # Press and release are reported separately; the Panel decides when the
         # gesture becomes a click (release over the same widget).
-        self._pk_dispatch(Event(type=EventType.MOUSE_DOWN, x=x, y=y, button="left"))
+        self._pk_dispatch(Event(type=EventType.MOUSE_DOWN, x=x, y=y, button="left",
+                                modifiers=mods))
 
     def mouseUp_(self, ns_event):
+        if getattr(self, "_ctrl_click", False):
+            self._ctrl_click = False
+            return
         x, y = self._mouse_unit(ns_event)
-        self._pk_dispatch(Event(type=EventType.MOUSE_UP, x=x, y=y, button="left"))
+        self._pk_dispatch(Event(type=EventType.MOUSE_UP, x=x, y=y, button="left",
+                                modifiers=_modifier_names(ns_event.modifierFlags())))
 
     def rightMouseDown_(self, ns_event):
         # Right-click acts on press (context menus), so it stays an atomic click.
         x, y = self._mouse_unit(ns_event)
-        self._pk_dispatch(Event(type=EventType.MOUSE_CLICK, x=x, y=y, button="right"))
+        self._pk_dispatch(Event(type=EventType.MOUSE_CLICK, x=x, y=y, button="right",
+                                modifiers=_modifier_names(ns_event.modifierFlags())))
+
+    def otherMouseDown_(self, ns_event):
+        # The middle button behaves like the left (press and release, the Panel
+        # makes the click); the side buttons are atomic clicks on press, like
+        # the right button, since nothing drags with them.
+        button = _OTHER_BUTTONS.get(int(ns_event.buttonNumber()))
+        if button is None:
+            return
+        x, y = self._mouse_unit(ns_event)
+        mods = _modifier_names(ns_event.modifierFlags())
+        kind = EventType.MOUSE_DOWN if button == "middle" else EventType.MOUSE_CLICK
+        self._pk_dispatch(Event(type=kind, x=x, y=y, button=button, modifiers=mods))
+
+    def otherMouseUp_(self, ns_event):
+        if _OTHER_BUTTONS.get(int(ns_event.buttonNumber())) != "middle":
+            return
+        x, y = self._mouse_unit(ns_event)
+        self._pk_dispatch(Event(type=EventType.MOUSE_UP, x=x, y=y, button="middle",
+                                modifiers=_modifier_names(ns_event.modifierFlags())))
 
     def mouseDragged_(self, ns_event):
         self._last_mouse_event = ns_event
         x, y = self._mouse_unit(ns_event)
-        self._pk_dispatch(Event(type=EventType.MOUSE_DRAG, x=x, y=y, button="left"))
+        self._pk_dispatch(Event(type=EventType.MOUSE_DRAG, x=x, y=y, button="left",
+                                modifiers=_modifier_names(ns_event.modifierFlags())))
 
     # NSDraggingSource: the operations this view offers as a drag source, set
     # per session by begin_file_drag (copy / move / link). The receiver picks
@@ -1326,13 +1367,39 @@ class _PuiKitView(NSView, protocols=[_NS_TEXT_INPUT_CLIENT]):
         cw, ch = self.backend.base_size
         return (point.x / cw, point.y / ch)
 
+    def _drop_feedback(self, sender):
+        """The operation the cursor badge shows: what the held modifiers ask
+        for (Finder's: Command moves, Option copies, both make an alias), else
+        a copy — the app picks the real default at the drop, knowing the target
+        volume, which only it can. Nothing for a drag without files."""
+        if not self._dropped_paths(sender):
+            return NSDragOperationNone
+        op = self._allowed_operation(sender)
+        return {"move": NSDragOperationMove, "link": NSDragOperationLink}.get(
+            op, NSDragOperationCopy)
+
+    def _allowed_operation(self, sender) -> str | None:
+        """What the held modifiers ask for, if the drag's source allows it —
+        a source offering only copy (a mail attachment, say) is not moved
+        because Command was down. None for no request, or one refused."""
+        op = drop_operation_macos(_modifier_names(NSEvent.modifierFlags()))
+        flag = {"move": NSDragOperationMove, "link": NSDragOperationLink,
+                "copy": NSDragOperationCopy}.get(op)
+        if flag is None:
+            return None
+        try:
+            mask = int(sender.draggingSourceOperationMask())
+        except Exception:  # noqa: BLE001 — a sender without one: trust the keys
+            return op
+        return op if mask & flag else None
+
     def draggingEntered_(self, sender):
-        # Offer a copy (the green "+" badge) only for a drag that carries files;
-        # reject anything else so the cursor shows it won't be accepted.
-        return NSDragOperationCopy if self._dropped_paths(sender) else NSDragOperationNone
+        # Reject a drag that carries no files, so the cursor shows it won't be
+        # accepted.
+        return self._drop_feedback(sender)
 
     def draggingUpdated_(self, sender):
-        return NSDragOperationCopy if self._dropped_paths(sender) else NSDragOperationNone
+        return self._drop_feedback(sender)
 
     def prepareForDragOperation_(self, sender):
         return bool(self._dropped_paths(sender))
@@ -1342,8 +1409,10 @@ class _PuiKitView(NSView, protocols=[_NS_TEXT_INPUT_CLIENT]):
         if not paths:
             return False
         x, y = self._drop_unit(sender)
+        mods = _modifier_names(NSEvent.modifierFlags())
         self._pk_dispatch(
-            Event(type=EventType.FILE_DROP, x=x, y=y, hints={"paths": paths})
+            Event(type=EventType.FILE_DROP, x=x, y=y, modifiers=mods,
+                  hints={"paths": paths, "operation": self._allowed_operation(sender)})
         )
         return True
 
@@ -1373,7 +1442,8 @@ class _PuiKitView(NSView, protocols=[_NS_TEXT_INPUT_CLIENT]):
             if delta_x != 0:
                 hints["scroll_units_x"] = delta_x / self.backend._base_w
         self._pk_dispatch(
-            Event(type=EventType.MOUSE_SCROLL, x=x, y=y, scroll=scroll, hints=hints)
+            Event(type=EventType.MOUSE_SCROLL, x=x, y=y, scroll=scroll, hints=hints,
+                  modifiers=_modifier_names(ns_event.modifierFlags()))
         )
 
 

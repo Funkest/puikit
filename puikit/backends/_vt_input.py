@@ -66,6 +66,8 @@ _SGR_ALT = 0x08
 _SGR_CTRL = 0x10
 _SGR_MOTION = 0x20
 _SGR_WHEEL = 0x40
+#: Buttons 8–11 (xterm): 128 + n-8. 8 and 9 are the side buttons.
+_SGR_EXTRA = 0x80
 
 
 def _escape_complete(buf: str) -> bool:
@@ -231,6 +233,14 @@ def _sgr_mouse_records(seq: str) -> list[dict]:
         mods.add("alt")
     mods = frozenset(mods)
     low = b & _SGR_BUTTON
+    if b & _SGR_EXTRA:
+        # A side button: an atomic click on press, as the GUI backends report
+        # it; its release and any motion with it are dropped.
+        button = {0: "back", 1: "forward"}.get(low)
+        if button is None or seq[-1] == "m" or b & _SGR_MOTION:
+            return []
+        return [{"type": "mouse", "action": "click", "x": x, "y": y,
+                 "button": button, "mods": mods}]
     if b & _SGR_WHEEL:
         # 64 up, 65 down, 66 wheel-left, 67 wheel-right. Away from the user —
         # and rightward, matching Windows' positive HWHEEL — is positive.

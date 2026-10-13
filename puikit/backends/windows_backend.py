@@ -316,6 +316,9 @@ _BUTTON_BY_MSG = {
     native.WM_MBUTTONUP: "middle",
 }
 
+#: ``HIWORD(wParam)`` of WM_XBUTTON*: XBUTTON1 is back, XBUTTON2 forward.
+_XBUTTONS = {1: "back", 2: "forward"}
+
 MK_LBUTTON = 0x0001
 WHEEL_DELTA = 120  # one notch of a classic wheel; Precision Touchpad gestures
 # report finer fractions of this for sub-notch, pixel-smooth scrolling.
@@ -3834,6 +3837,8 @@ class WindowsBackend(Backend):
             return self._on_mouse_down(msg, lparam)
         if msg in (native.WM_LBUTTONUP, native.WM_RBUTTONUP, native.WM_MBUTTONUP):
             return self._on_mouse_up(msg, lparam)
+        if msg in (native.WM_XBUTTONDOWN, native.WM_XBUTTONUP):
+            return self._on_xbutton(msg, wparam, lparam)
         if msg == native.WM_MOUSEMOVE:
             return self._on_mouse_move(wparam, lparam)
         if msg == native.WM_MOUSELEAVE:
@@ -3979,14 +3984,18 @@ class WindowsBackend(Backend):
             for ch in result_text:
                 self._dispatch(char_key_event(ch, mods))
 
-    def _dispatch_file_drop(self, paths: list[str], point: tuple[int, int]) -> None:
+    def _dispatch_file_drop(self, paths: list[str], point: tuple[int, int],
+                            operation: str | None = None,
+                            modifiers: frozenset = frozenset()) -> None:
         """The IDropTarget callback (_win32_dragdrop.register_drop_target):
-        ``point`` is already client-area pixels. Runs on this window's own UI
-        thread — OLE delivers IDropTarget calls on the thread that registered
-        it, same as every other message here."""
+        ``point`` is already client-area pixels; ``operation`` is what the
+        held keys asked for (Explorer's rules), None for the default. Runs on
+        this window's own UI thread — OLE delivers IDropTarget calls on the
+        thread that registered it, same as every other message here."""
         px, py = point
         x, y = px / self._base_w, py / self._base_h
-        self._dispatch(Event(type=EventType.FILE_DROP, x=x, y=y, hints={"paths": paths}))
+        self._dispatch(Event(type=EventType.FILE_DROP, x=x, y=y, modifiers=modifiers,
+                             hints={"paths": paths, "operation": operation}))
 
     def _on_mouse_down(self, msg: int, lparam: int) -> int:
         button = _BUTTON_BY_MSG[msg]
@@ -4000,18 +4009,33 @@ class WindowsBackend(Backend):
         # the border, while macOS, which routes a drag to the window that took
         # the mouse-down and has no capture to get wrong, was fine.
         native.user32.SetCapture(self._target_hwnd())
+        mods = _key_modifiers()
         if button == "right":
             # Right-click acts on press (context menus), so it stays an atomic click.
-            self._dispatch(Event(type=EventType.MOUSE_CLICK, x=x, y=y, button="right"))
+            self._dispatch(Event(type=EventType.MOUSE_CLICK, x=x, y=y, button="right",
+                                 modifiers=mods))
         else:
-            self._dispatch(Event(type=EventType.MOUSE_DOWN, x=x, y=y, button=button))
+            self._dispatch(Event(type=EventType.MOUSE_DOWN, x=x, y=y, button=button,
+                                 modifiers=mods))
         return 0
+
+    def _on_xbutton(self, msg: int, wparam: int, lparam: int) -> int:
+        """The side buttons: an atomic click on press, like the right button,
+        since nothing drags with them. Windows wants TRUE back for these."""
+        if msg == native.WM_XBUTTONDOWN:
+            button = _XBUTTONS.get(native.hiword(wparam))
+            if button is not None:
+                x, y = self._mouse_xy(lparam)
+                self._dispatch(Event(type=EventType.MOUSE_CLICK, x=x, y=y,
+                                     button=button, modifiers=_key_modifiers()))
+        return 1
 
     def _on_mouse_up(self, msg: int, lparam: int) -> int:
         button = _BUTTON_BY_MSG[msg]
         x, y = self._mouse_xy(lparam)
         native.user32.ReleaseCapture()
-        self._dispatch(Event(type=EventType.MOUSE_UP, x=x, y=y, button=button))
+        self._dispatch(Event(type=EventType.MOUSE_UP, x=x, y=y, button=button,
+                             modifiers=_key_modifiers()))
         return 0
 
     def _on_mouse_move(self, wparam: int, lparam: int) -> int:
@@ -4028,7 +4052,8 @@ class WindowsBackend(Backend):
             self._tracking_mouse = True
         x, y = self._mouse_xy(lparam)
         if wparam & MK_LBUTTON:
-            self._dispatch(Event(type=EventType.MOUSE_DRAG, x=x, y=y, button="left"))
+            self._dispatch(Event(type=EventType.MOUSE_DRAG, x=x, y=y, button="left",
+                                 modifiers=_key_modifiers()))
         else:
             self._dispatch(Event(type=EventType.MOUSE_MOVE, x=x, y=y))
         return 0
@@ -4051,7 +4076,8 @@ class WindowsBackend(Backend):
         # hasPreciseScrollingDeltas (see MacOSBackend.scrollWheel_).
         scroll_units = delta / WHEEL_DELTA
         self._dispatch(
-            Event(type=EventType.MOUSE_SCROLL, x=x, y=y, scroll=scroll, hints={"scroll_units": scroll_units})
+            Event(type=EventType.MOUSE_SCROLL, x=x, y=y, scroll=scroll, hints={"scroll_units": scroll_units},
+                  modifiers=_key_modifiers())
         )
         return 0
 
@@ -4160,6 +4186,8 @@ class WindowsBackend(Backend):
             return self._on_mouse_down(msg, lparam)
         if msg in (native.WM_LBUTTONUP, native.WM_RBUTTONUP, native.WM_MBUTTONUP):
             return self._on_mouse_up(msg, lparam)
+        if msg in (native.WM_XBUTTONDOWN, native.WM_XBUTTONUP):
+            return self._on_xbutton(msg, wparam, lparam)
         if msg == native.WM_MOUSEMOVE:
             return self._on_mouse_move(wparam, lparam)
         if msg == native.WM_MOUSELEAVE:

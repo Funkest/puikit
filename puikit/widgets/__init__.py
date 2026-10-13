@@ -1,5 +1,6 @@
 """Shared widget library. One implementation per widget, all backends."""
 
+from ._input import MultiClickTracker
 from .base import Widget
 from .busy_indicator import BusyIndicator
 from .button import Button
@@ -62,4 +63,5 @@ __all__ = [
     "Widget",
     "show_drawer",
     "show_message_box",
+    "MultiClickTracker",
 ]

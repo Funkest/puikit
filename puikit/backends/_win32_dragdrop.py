@@ -55,6 +55,7 @@ import ctypes
 from ctypes import wintypes
 from typing import Callable
 
+from ._drop_policy import drop_modifiers_windows, drop_operation_windows
 from ._win32_native import GUID, ComPtr
 
 shell32 = ctypes.WinDLL("shell32", use_last_error=True)
@@ -229,15 +230,26 @@ class _IDropTargetObj(ctypes.Structure):
     _fields_ = [("lpVtbl", ctypes.POINTER(_IDropTargetVtbl))]
 
 
+def drop_effect_feedback(key_state: int, allowed: int) -> int:
+    """The cursor badge for a hover: the asked-for effect where the source
+    allows it, else a copy."""
+    wanted = _DROP_EFFECT_BY_OP.get(drop_operation_windows(key_state), DROPEFFECT_COPY)
+    if allowed and not allowed & wanted:
+        wanted = DROPEFFECT_COPY if allowed & DROPEFFECT_COPY else allowed & -allowed
+    return wanted
+
+
 class DropTarget:
     """A live ``IDropTarget`` COM object registered on one ``hwnd`` via
-    ``RegisterDragDrop``. ``on_drop(paths, (client_x, client_y))`` fires once,
+    ``RegisterDragDrop``. ``on_drop(paths, (client_x, client_y), operation,
+    modifiers)`` fires once — ``operation`` being what the held keys asked for
+    (:func:`drop_operation_windows`), None for the default —
     on an actual drop of a file-carrying data object; hovering with anything
     else shows the "no drop" cursor and never calls it. Keep the instance
     alive for as long as the window is registered (store it on the backend;
     see ``register_drop_target``) — same lifetime rule as ``DropSource``."""
 
-    def __init__(self, on_drop: Callable[[list[str], tuple[int, int]], None]) -> None:
+    def __init__(self, on_drop: Callable[..., None]) -> None:
         self._on_drop = on_drop
         self._refcount = 1
         self._has_files = False
@@ -272,11 +284,13 @@ class DropTarget:
 
     def _drag_enter(self, this: int, data_obj: int, grf_key_state: int, pt, pdw_effect) -> int:
         self._has_files = _data_object_offers_files(data_obj)
-        pdw_effect[0] = DROPEFFECT_COPY if self._has_files else DROPEFFECT_NONE
+        pdw_effect[0] = drop_effect_feedback(grf_key_state, pdw_effect[0]) \
+            if self._has_files else DROPEFFECT_NONE
         return 0
 
     def _drag_over(self, this: int, grf_key_state: int, pt, pdw_effect) -> int:
-        pdw_effect[0] = DROPEFFECT_COPY if self._has_files else DROPEFFECT_NONE
+        pdw_effect[0] = drop_effect_feedback(grf_key_state, pdw_effect[0]) \
+            if self._has_files else DROPEFFECT_NONE
         return 0
 
     def _drag_leave(self, this: int) -> int:
@@ -285,13 +299,18 @@ class DropTarget:
 
     def _drop(self, this: int, data_obj: int, grf_key_state: int, pt, pdw_effect) -> int:
         paths = _data_object_hdrop_paths(data_obj)
-        pdw_effect[0] = DROPEFFECT_COPY if paths else DROPEFFECT_NONE
+        allowed = pdw_effect[0]
+        pdw_effect[0] = drop_effect_feedback(grf_key_state, allowed) if paths else DROPEFFECT_NONE
         self._has_files = False
         if paths:
             hwnd = _drop_target_hwnds.get(id(self), 0)
             screen_pt = wintypes.POINT(pt.x, pt.y)  # DragEnter/Over/Drop report screen coords
             user32.ScreenToClient(hwnd, ctypes.byref(screen_pt))
-            self._on_drop(paths, (screen_pt.x, screen_pt.y))
+            op = drop_operation_windows(grf_key_state)
+            if op is not None and allowed and not allowed & _DROP_EFFECT_BY_OP[op]:
+                op = None  # the source does not allow it: the default decides
+            self._on_drop(paths, (screen_pt.x, screen_pt.y), op,
+                          drop_modifiers_windows(grf_key_state))
         return 0
 
 
@@ -302,7 +321,7 @@ class DropTarget:
 _drop_target_hwnds: dict[int, int] = {}
 
 
-def register_drop_target(hwnd: int, on_drop: Callable[[list[str], tuple[int, int]], None]) -> DropTarget:
+def register_drop_target(hwnd: int, on_drop: Callable[..., None]) -> DropTarget:
     target = DropTarget(on_drop)
     _drop_target_hwnds[id(target)] = hwnd
     ole32.RegisterDragDrop(hwnd, target.addr)

@@ -155,3 +155,14 @@ def test_message_box_close_removes_itself_not_the_topmost_layer(backend):
     box._close(0)
     assert results == ["OK"]
     assert [slot.widget for slot in panel._layers] == [cover]
+
+
+def test_message_box_marks_its_default_by_focus_alone(backend):
+    """Enter presses the focused button and focus always rests on one, so no
+    button wears the accent fill: the focus ring is the one cue, and the
+    default is simply where focus starts."""
+    panel = Panel(backend)
+    show_message_box(panel, "Delete?", buttons=("Delete", "Cancel"), default=1)
+    box = panel._layers[-1].widget
+    assert [b.variant for b in box._widgets] == ["secondary", "secondary"]
+    assert box.focused == 1

@@ -228,6 +228,30 @@ class MemoryBackend(Backend):
         self.tray_calls: list[tuple] = []  # (title, menu, tooltip, image) per set_tray
         self.clear()
 
+
+    # --- file clipboard: process-local, for tests --------------------------------
+    # The profile does not declare ``clipboard_files`` (a test sets it when it
+    # wants to pretend), but the store always works, so a test can drive the
+    # app's OS-clipboard path and play "another application" by writing here.
+
+    def set_clipboard_files(self, paths: list[str], cut: bool = False) -> bool:
+        from ..clipboard import ClipboardFiles
+        self._clipboard_files = ClipboardFiles(tuple(paths), cut)
+        self._clipboard_count = getattr(self, "_clipboard_count", 0) + 1
+        return True
+
+    def get_clipboard_files(self):
+        return getattr(self, "_clipboard_files", None)
+
+    def clipboard_change_count(self) -> int | None:
+        return getattr(self, "_clipboard_count", 0)
+
+    def set_clipboard(self, text: str) -> None:
+        # Text replaces files, as on a real clipboard.
+        self._clipboard = text
+        self._clipboard_files = None
+        self._clipboard_count = getattr(self, "_clipboard_count", 0) + 1
+
     def call_later(self, delay_seconds: float, callback) -> Any:
         """Record the one-shot instead of scheduling it; tests fire pending
         timers deterministically with fire_timers(). The UI-thread guard is

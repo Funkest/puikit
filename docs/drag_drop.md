@@ -122,3 +122,40 @@ separately by `drag_and_drop`. GUI backends register the view as a drag
 behavior is that many emulators paste a dropped file's path as ordinary text
 input (arriving as `KEY`/paste, not a positioned drop). This document covers the
 drag-*out* side; drop-in handling is future work.
+
+## The file clipboard (`clipboard_files`)
+
+Copy and paste of *files* between applications (Finder's and Explorer's
+Copy / Cut / Paste) is drag-out's sibling. The same files leave the app, but
+through the clipboard rather than the pointer. Three Panel calls carry it:
+
+```python
+panel.set_clipboard_files(paths, cut=False)   # -> True if the OS clipboard now holds them
+panel.get_clipboard_files()                   # -> ClipboardFiles(paths, cut) | None
+panel.clipboard_change_count()                # -> int | None
+```
+
+- **macOS** writes file `NSURL`s and reads them back (file URLs only).
+  macOS has no cut for files (Finder moves on Cmd-Opt-V), so `cut` is not
+  written and always reads back False.
+- **Windows** writes `CF_HDROP` (a `DROPFILES` header and the wide paths,
+  double-NUL terminated) plus a registered **"Preferred DropEffect"** DWORD,
+  `DROPEFFECT_MOVE` for a cut, exactly as Explorer does. Reading it back
+  turns an Explorer Cut into `cut=True`.
+- **`clipboard_change_count`** is `changeCount` on macOS and
+  `GetClipboardSequenceNumber` on Windows. It changes on every write by any
+  application. An app records it right after its own write, and a
+  different value later means another application has replaced the
+  clipboard.
+
+Without the capability (every terminal backend, and so every Linux setup)
+the three calls are no-ops: `False`, `None`, `None`. There is no text
+fallback the way drag-out has one. An app that offers a file clipboard keeps
+its own in any case, and the OS clipboard is only the bridge to other
+applications. Writing paths as text would silently replace whatever text the
+user had copied.
+
+`MemoryBackend` keeps a process-local file clipboard with a counter (and
+plain text replaces it), so an app's tests can play "another application"
+by writing to it.
+

@@ -52,6 +52,9 @@ PROFILE_TUI = CapabilityProfile(
     os_open=False,           # no OS shell to open a URL; Panel copies it instead
     ime=False,
     clipboard_rich=False,
+    clipboard_files=False,   # files on the OS clipboard (Finder / Explorer copy &
+                             # paste). Without it the app keeps its own; the
+                             # Panel's file-clipboard calls are harmless no-ops.
     native_file_dialog=False,
     system_tray=False,
     native_menus=False,      # OS menu bar / context menus (NSMenu, HMENU, ...);
@@ -116,6 +119,7 @@ PROFILE_GUI_DESKTOP = CapabilityProfile(
     {
         **PROFILE_GUI_WEB,
         "clipboard_rich": True,
+        "clipboard_files": True,
         "native_file_dialog": True,
         "system_tray": True,
         "native_menus": True,

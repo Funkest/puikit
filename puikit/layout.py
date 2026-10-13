@@ -91,6 +91,20 @@ class LayoutContext:
     # already physical pixels on a pixel-layout backend). See pixel_base.
     base_pixel_w: float = 0.0
     base_pixel_h: float = 0.0
+    # How a Style reaches the backend's measurers: the font half of the seam
+    # every drawn Style crosses (``panel.fold_font``) — a font-less style takes
+    # the proportional UI font on a GUI, a font the backend cannot render folds
+    # to bold/italic. Applied by every ``measure_*`` method below, so text is
+    # measured in the face it will be drawn in. None: styles pass unchanged.
+    fold: Callable[[Any], Any] | None = None
+    # Resolved point size of a style's font, for a widget that scales one size
+    # off another (a heading off the body); see ``measure_font_size``.
+    font_size: Callable[[Any], float] | None = None
+    # The backend draws true device pixels (hairline strokes, sub-unit insets)
+    # rather than whole cells — mirrors ``DrawContext.vector_shapes``, for a
+    # widget whose height depends on it (a table's border rows take a cell
+    # each on a grid and next to nothing on a vector backend).
+    vector_shapes: bool = False
     # Divider rects emitted during resolve, for the Panel to draw.
     dividers: list[Divider] = field(default_factory=list)
 
@@ -103,13 +117,24 @@ class LayoutContext:
         real, non-square cell pixels."""
         return (self.base_pixel_w or self.base_w, self.base_pixel_h or self.base_h)
 
+    def _folded(self, style: Any) -> Any:
+        """``style`` as the backend will see it, or None to let the backend
+        apply its own default (no style given, nothing to fold with)."""
+        if self.fold is None:
+            return style
+        from .backend import DEFAULT_STYLE
+
+        return self.fold(DEFAULT_STYLE if style is None else style)
+
     def measure_text(self, text: str, style: Any = None) -> float:
-        """Width of ``text`` in base units. Falls back to the column count when the
-        backend supplies no measurer (whole-unit backends: one column/char)."""
+        """Width of ``text`` in base units, in the face it will be drawn in.
+        Falls back to the column count when the backend supplies no measurer
+        (whole-unit backends: one column/char)."""
         if self.measure is not None:
-            # A caller measuring in the default font (font=None grid glyph)
-            # passes no style; let the backend apply its own default rather than
-            # forwarding None, which a font-measuring backend would dereference.
+            style = self._folded(style)
+            # With nothing to fold and no style, let the backend apply its own
+            # default rather than forwarding None, which a font-measuring
+            # backend would dereference.
             if style is None:
                 return self.measure(text)
             return self.measure(text, style)
@@ -119,10 +144,22 @@ class LayoutContext:
         """Row pitch of ``style``'s font in base units (1.0 with no measurer or
         the base grid font), so a stacked-text widget reserves the right height."""
         if self.line_height is not None:
+            style = self._folded(style)
             if style is None:
                 return self.line_height()
             return self.line_height(style)
         return 1.0
+
+    def measure_font_size(self, style: Any = None) -> float:
+        """Resolved point size of ``style``'s font, in points — read to derive
+        one size from another and keep only the ratio. Falls back to the
+        backend base size with no measurer."""
+        if self.font_size is not None:
+            style = self._folded(style)
+            return self.font_size() if style is None else self.font_size(style)
+        from .backend import Backend
+
+        return float(Backend.BASE_FONT_SIZE)
 
     def measure_font_metrics(self, style: Any = None):
         """Ascent/descent (``FontMetrics``, base units) of ``style``'s font, so a
@@ -131,6 +168,7 @@ class LayoutContext:
         from .font import FontMetrics
 
         if self.metrics is not None:
+            style = self._folded(style)
             return self.metrics() if style is None else self.metrics(style)
         return FontMetrics(ascent=1.0, descent=0.0)
 

@@ -65,6 +65,7 @@ the built-in behavior (``#slug`` scrolls, anything else goes to
 from __future__ import annotations
 
 import bisect
+import copy
 import os
 import re
 from dataclasses import dataclass, field, replace
@@ -76,6 +77,7 @@ from ..backend import DEFAULT_STYLE, Color, Style, TextAttribute
 from ..event import Event, EventType
 from ..font import Font
 from ..image import aspect_extent
+from ..layout import LayoutContext, SizeRequest
 from ..panel import DrawContext
 from ..text import glyph_runs, word_bounds
 from ..theme import DEFAULT_THEME, Theme, lift
@@ -1236,10 +1238,31 @@ class MarkdownView(Widget):
 
     # --- layout ---------------------------------------------------------------
 
-    def _layout(self, width: float, ctx: DrawContext) -> list[_Row]:
+    def measure(self, ctx: LayoutContext, axis: str, available: float) -> SizeRequest:
+        """Height of the whole document wrapped to ``available`` base units —
+        the same layout ``draw`` runs, so a view given that height shows all
+        of it without a scrollbar. That is what a container needs to size
+        itself to the content rather than guess, which on a GUI it cannot:
+        table borders, heading sizes and a proportional face all change the
+        pitch. It may shrink to one line (the rest then scrolls). Images count
+        at their full fitted height (``draw`` contains one in the viewport,
+        which a view being measured does not have yet). The layout runs on a
+        throwaway copy, so a view on screen keeps its rows, caches and scroll
+        position. Width: no opinion — the text wraps to whatever it gets."""
+        if axis != "y":
+            return SizeRequest()
+        probe = copy.copy(self)
+        probe._layout_cache = {}
+        probe._view_h = 0.0  # no viewport to contain images in
+        # Colors do not move anything, so the default theme lays out the same.
+        probe._layout(available, ctx, DEFAULT_THEME)
+        h = probe._row_tops[-1]
+        return SizeRequest(min=min(h, probe._line_pitch), preferred=h, max=h)
+
+    def _layout(self, width: float, lc: LayoutContext, theme: Theme) -> list[_Row]:
         """Wrap every semantic line to ``width`` base units, returning the flat
         list of ``_Row`` and rebuilding the cumulative ``_row_tops`` index.
-        Wrapping and every row height go through ``ctx`` so a proportional / sized
+        Wrapping and every row height go through ``lc`` so a proportional / sized
         face measures and spaces correctly, and an image is sized to its aspect
         ratio. Rebuilt only when the width, view height (image cap), or source
         changes."""
@@ -1254,25 +1277,23 @@ class MarkdownView(Widget):
             self._wrap_width = width
             self._wrap_view_h = self._view_h
             return self._rows
-        theme = ctx.theme or DEFAULT_THEME
-        measure = ctx.measure_text
+        measure = lc.measure_text
         # Row height is the line height of the row's font(s); cache per font so a
         # long document does not re-resolve the same face per row. The grid font
         # reports 1.0, so a terminal stays one unit per row.
         lh_cache: dict[Font | None, float] = {}
-        lc = None  # LayoutContext, built lazily for image sizing
 
         def line_height(style: Style) -> float:
             font = style.font
             if font not in lh_cache:
-                lh_cache[font] = ctx.line_height(style)
+                lh_cache[font] = lc.measure_line_height(style)
             return lh_cache[font]
 
         self._line_pitch = line_height(Style(font=self.text_font))
         # Body face point size, the size headings scale off of. The backend owns
         # the absolute value (the base size when text_font names none); the
         # widget keeps only the per-level ratio (DEFAULT_HEADING_SCALES).
-        body_size = ctx.font_size(Style(font=self.text_font))
+        body_size = lc.measure_font_size(Style(font=self.text_font))
         rows: list[_Row] = []
         anchors: list[tuple[str, int]] = []  # (slug, first row index) per heading
         for sem in self._sems:
@@ -1294,31 +1315,21 @@ class MarkdownView(Widget):
                 # no grid cell of their own (near-zero height keeps the vertical
                 # bars of adjacent text rows touching the horizontals); a grid
                 # backend gives each border its own one-cell row for the glyphs.
-                bh = max(1, ctx.base_size[1])
-                border_h = (1.0 / bh) if ctx.vector_shapes else self._line_pitch
+                bh = max(1, lc.base_h)
+                border_h = (1.0 / bh) if lc.vector_shapes else self._line_pitch
                 # A small inner top/bottom margin so cell text does not sit flush
                 # against the rules on GUI. The grid keeps borders in their own
                 # rows (natural gap) and must stay integer-aligned, so 0 there.
-                cell_pad_v = max(2.0 / bh, 0.1 * self._line_pitch) if ctx.vector_shapes else 0.0
-
-                def get_lc():
-                    # Lazy like the image block's ``lc``: built only when a
-                    # table actually holds an image cell.
-                    nonlocal lc
-                    if lc is None:
-                        lc = ctx.layout_context()
-                    return lc
+                cell_pad_v = max(2.0 / bh, 0.1 * self._line_pitch) if lc.vector_shapes else 0.0
 
                 rows.extend(
                     self._layout_table(
                         sem.table, width - qind, measure, theme, qd, border_h,
-                        cell_pad_v, ctx.vector_shapes, get_lc,
+                        cell_pad_v, lc.vector_shapes, lc,
                     )
                 )
                 continue
             if sem.block == "image":
-                if lc is None:
-                    lc = ctx.layout_context()
                 src = self._resolve_src(sem.data) if sem.data else None
                 size = lc.measure_image(src) if src else None
                 alt = sem.runs[0][0] if sem.runs else None
@@ -1430,7 +1441,8 @@ class MarkdownView(Widget):
 
     def _layout_table(
         self, tbl: _Table, width: float, measure, theme: Theme, qd: int,
-        border_h: float, cell_pad_v: float, vector: bool, get_lc=None,
+        border_h: float, cell_pad_v: float, vector: bool,
+        lc: LayoutContext | None = None,
     ) -> list[_Row]:
         """Lay a GFM table out as one ``_Row`` per grid row. Columns take their
         natural content width, scaled down proportionally (with a floor) when the
@@ -1467,7 +1479,7 @@ class MarkdownView(Widget):
         def norm(c: "list[InlineRun] | _CellImage") -> "list[InlineRun] | _CellImage":
             if isinstance(c, _CellImage):
                 src = self._resolve_src(c.path) if c.path else None
-                size = get_lc().measure_image(src) if get_lc and src else None
+                size = lc.measure_image(src) if lc is not None and src else None
                 if src and size and size[0] > 0 and size[1] > 0:
                     sized[id(c)] = (src, size)
                     return c
@@ -1482,7 +1494,7 @@ class MarkdownView(Widget):
                 src_size = sized[id(c)]
                 # The image's own width in base units — the scale-to-fit pass
                 # below then shares the row like any wide text column.
-                return src_size[1][0] / max(1.0, get_lc().base_w)
+                return src_size[1][0] / max(1.0, lc.base_w)
             return cell_w(to_spans(c, b))
 
         content_w = [
@@ -1529,12 +1541,11 @@ class MarkdownView(Widget):
                 c = cell_runs[j] if j < len(cell_runs) else []
                 if isinstance(c, _CellImage):
                     src, (pw, ph) = sized[id(c)]
-                    glc = get_lc()
                     # Natural size up to the column width (no upscaling a small
                     # icon to fill its column), height following the aspect
                     # ratio, capped to the viewport like a block image.
-                    iw = min(w, pw / max(1.0, glc.base_w))
-                    ih = aspect_extent(iw, True, pw, ph, glc.base_w, glc.base_h)
+                    iw = min(w, pw / max(1.0, lc.base_w))
+                    ih = aspect_extent(iw, True, pw, ph, lc.base_w, lc.base_h)
                     if self._view_h > 0 and ih > self._view_h:
                         iw *= self._view_h / ih
                         ih = self._view_h
@@ -1605,11 +1616,12 @@ class MarkdownView(Widget):
         # the wrap width, which depends on whether the bar shows. Lay out once at
         # the full width to learn if the content overflows, then (only if it
         # does) re-lay-out one base unit narrower to make room for the bar.
-        rows = self._layout(full_w, ctx)
+        lc = ctx.layout_context()
+        rows = self._layout(full_w, lc, theme)
         content_h = self._row_tops[-1]
         show_bar = content_h > view_h
         if show_bar:
-            rows = self._layout(full_w - 1.0, ctx)
+            rows = self._layout(full_w - 1.0, lc, theme)
             content_h = self._row_tops[-1]
         self._clamp(content_h)
 

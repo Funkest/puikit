@@ -201,6 +201,11 @@ Inline mixed styles, links, flowing content.
   URLs, and `[text][ref]` reference links; blocks cover ATX **and setext**
   headings, **hard line breaks**, and **nested / reflowed block quotes**.
   Virtualized over variable row heights.
+  **`measure(lc, "y", width)`** reports the document's laid-out height at a
+  width — the same layout `draw` runs (which now takes a `LayoutContext`), on a
+  throwaway copy so a view on screen is untouched — so it works as a
+  `size="content"` item and a dialog can fit its box to it
+  (`view.measure(panel.layout_context(), "y", w)`).
 - **Outcome:** the styled-run model now lives in `markdown_view.py`; if a second
   consumer appears, lift it (span list + wrap) into a shared helper and let
   `TextBlock` opt in, rather than duplicating it.

@@ -67,9 +67,9 @@ class MessageBox:
         # draw() once the theme is known, so its spans sit on the popup surface.
         self.markdown = markdown
         self._md: MarkdownView | None = None
-        # The default button (initially focused, drawn as the prominent
-        # "primary" action) and the one escape chooses (defaults to the last
-        # button, the conventional Cancel slot).
+        # The default button (initially focused, so the one a bare Enter
+        # presses) and the one escape chooses (defaults to the last button, the
+        # conventional Cancel slot).
         self.default = max(0, min(default, len(self.buttons) - 1))
         self.focused = self.default
         self.cancel = cancel if cancel is not None else len(self.buttons) - 1
@@ -77,13 +77,16 @@ class MessageBox:
         self._panel: Any = None
         # The row of buttons rendered as real Button widgets, so the message box
         # shares the regular button's flat fill, focus ring, and hover/pressed
-        # cues on every backend instead of hand-painting its own. The default
-        # button wears the accent "primary" fill; the rest are neutral
-        # "secondary" actions, exactly as a screen with two buttons reads.
+        # cues on every backend instead of hand-painting its own. Every button is
+        # a neutral "secondary": Enter presses the *focused* button, and focus
+        # always sits on one, so the focus ring already says what Enter does.
+        # An accent fill pinned to the default would only repeat that while
+        # focus is still there, and once focus moves it would mark a second
+        # button that Enter no longer presses.
         self._widgets = [
             Button(
                 label,
-                variant="primary" if i == self.default else "secondary",
+                variant="secondary",
                 on_click=(lambda i=i: self._close(i)),
             )
             for i, label in enumerate(self.buttons)
@@ -166,8 +169,8 @@ class MessageBox:
         # Button widgets via draw_child — so each carries the flat fill, focus
         # ring, and hover/pressed cues of the regular button. The focused button
         # is marked through the "focused" hint (the layer holds the focus, so the
-        # ring lights on exactly one button), and moving focus only moves the
-        # ring; the accent "primary" fill stays on the default button. Laid out
+        # ring lights on exactly one button), and moving focus moves the ring —
+        # the one cue for what Enter presses. Laid out
         # first so the message region knows where the buttons begin.
         lc = ctx.layout_context()
         widths, bh = self._row_metrics(lc)
@@ -340,11 +343,7 @@ def show_message_box(
     # layout uses for a content button), so the box is exactly wide enough for
     # the row it draws.
     caps = panel.backend.capabilities
-    lc = LayoutContext(
-        *panel.backend.base_size,
-        snap=not caps.supports("pixel_layout"),
-        measure=panel.backend.measure_text,
-    )
+    lc = panel.layout_context()
     btn_widths, btn_h = box._row_metrics(lc)
     label_w = sum(btn_widths) + _BUTTON_GAP * (len(btn_widths) - 1)
     content_w = max(

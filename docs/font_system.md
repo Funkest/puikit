@@ -271,7 +271,11 @@ Backend.measure_text(text, style=DEFAULT_STYLE) -> float
   same unit pane sizes use.)
 
 This is the same hook intrinsic sizing uses (`docs/layout_system.md` §6): a
-widget sized to its text calls `measure_text` from inside its `measure`.
+widget sized to its text calls `LayoutContext.measure_text` from inside its
+`measure`. Both contexts hand the backend the style *after* the font fold of
+§6 (`panel.fold_font`), so a `measure` and the `draw` that follows it see the
+same face: a style naming no font measures as the proportional UI font on a
+GUI, exactly as it is drawn.
 
 A widget that only ever uses the base monospaced font can keep counting
 characters and never call this; it exists for widgets that opt into real

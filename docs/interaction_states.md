@@ -172,6 +172,15 @@ non-primary action, and its accent focus ring is legal precisely because its
 fill is neutral. A bare-icon tile is always neutral; an explicit `style=` fill
 overrides both.
 
+**A dialog whose Enter follows focus has no primary button.** `MessageBox`
+(and any dialog built the same way) presses the *focused* button on Enter, and
+its focus always rests on a button — so the focus ring alone says what Enter
+does, and the default is expressed by where focus *starts*. An accent fill
+pinned to the default would repeat the ring until focus moves, and from then on
+mark a button Enter no longer presses: two highlighted buttons, the wrong one
+louder. Its buttons are all `secondary`. `primary` is for a standalone action
+in a layout, where no focus ring is speaking for it.
+
 ### The `selection_bg` token is overloaded
 
 One token, `theme.selection_bg` (#094771), is currently shared by the nav

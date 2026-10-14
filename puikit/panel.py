@@ -2753,8 +2753,14 @@ class Panel:
         sw, sh = self.backend.size_units
         x = max(0.0, min(x, sw - w))
         y = max(0.0, min(y, sh - h))
+        # Above whatever is on top: a popup opened from a modal dialog (a
+        # chip's values, a field's history) must not open beneath it, where
+        # it could neither be seen nor closed. 60 stays the floor, so a menu
+        # opened over the main window sits where it always has.
+        top = max((slot.z for slot in self._layers), default=0)
         self.push_layer(
-            popup, z=60, hints={"shadow": True, "x": x, "y": y, "w": w, "h": h}
+            popup, z=max(60, top + 1),
+            hints={"shadow": True, "x": x, "y": y, "w": w, "h": h},
         )
 
     # --- event routing ----------------------------------------------------------------

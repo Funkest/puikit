@@ -102,6 +102,29 @@ def test_popup_menu_activates_item_and_dismisses(backend):
     assert panel._layers == []  # whole chain torn down
 
 
+def test_popup_menu_opens_above_a_modal_dialog(backend):
+    """A popup opened from a dialog layered above 60 (a chip's values, a
+    field's history) must land on top of it — beneath, it could neither be
+    seen nor closed, and each further click stacked another."""
+    panel = Panel(backend)
+    panel.push_layer(Label("dialog"), z=70, hints={"x": 0, "y": 0, "w": 20, "h": 5})
+    fired = []
+    panel.popup_menu(_ctx_menu(fired), 2, 2)
+    popup = panel._layers[-1].widget
+    assert panel._layers[-1].z > 70
+    panel.render()
+    panel.dispatch_event(_key("enter"))
+    assert fired == ["cut"]
+    assert [slot.z for slot in panel._layers] == [70]   # the popup closed itself
+    assert popup is not panel._layers[-1].widget
+
+
+def test_popup_menu_over_the_window_keeps_its_layer(backend):
+    panel = Panel(backend)
+    panel.popup_menu(_ctx_menu([]), 2, 2)
+    assert panel._layers[-1].z == 60
+
+
 def test_popup_menu_submenu_opens_and_commits(backend):
     panel = Panel(backend)
     fired = []

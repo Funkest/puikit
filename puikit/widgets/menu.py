@@ -234,16 +234,13 @@ class MenuPopup(Widget):
         sw, sh = self._panel.backend.size_units
         x = min(rx + rw, max(0.0, sw - w))
         y = min(ry + index * self._row_h, max(0.0, sh - h))
+        # One above this popup's own layer, wherever that is: a popup opened
+        # over a modal dialog sits above 60, and its submenu must follow it.
+        own = next((slot.z for slot in self._panel._layers if slot.widget is self), 60)
         self._panel.push_layer(
-            child, z=61 + self._depth(),
+            child, z=own + 1,
             hints={"shadow": True, "x": x, "y": y, "w": w, "h": h},
         )
-
-    def _depth(self) -> int:
-        d, p = 0, self.parent
-        while p is not None:
-            d, p = d + 1, p.parent
-        return d
 
     def _bar(self) -> "MenuBar | None":
         root = self

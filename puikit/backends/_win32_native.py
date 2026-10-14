@@ -2320,7 +2320,6 @@ class NOTIFYICONDATAW(ctypes.Structure):
     ]
 
 
-shell32 = ctypes.WinDLL("shell32", use_last_error=True)
 shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
 shell32.Shell_NotifyIconW.restype = wintypes.BOOL
 

@@ -48,4 +48,4 @@ def test_paths_are_strings():
     from pathlib import Path
     panel = Panel(MemoryBackend())
     panel.set_clipboard_files([Path("/tmp/a.txt")])
-    assert panel.get_clipboard_files().paths == ("/tmp/a.txt",)
+    assert panel.get_clipboard_files().paths == (str(Path("/tmp/a.txt")),)

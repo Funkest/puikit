@@ -680,6 +680,10 @@ _WNDPROC_TRAMPOLINE = native.WNDPROC(_global_wndproc)
 _APP_ICON_RESOURCE_ID = 1
 
 
+#: The (large, small) app icons, loaded once - see _load_app_icons.
+_app_icons: tuple[int, int] | None = None
+
+
 def _load_app_icons() -> tuple[int, int]:
     """
     Load the host executable's embedded application icon as a (large, small)
@@ -689,7 +693,25 @@ def _load_app_icons() -> tuple[int, int]:
     Falls back to the generic system application icon when the running module has
     no such resource (e.g. under a bare ``python.exe`` in development), so a
     window always has *some* icon rather than a blank one.
+
+    **Loaded once and kept.** LoadImageW without LR_SHARED hands back icons
+    the caller owns, and nothing destroyed them: each call leaked 6 GDI and 2
+    USER objects (measured, crftwr/keyhac#185). That was invisible while only
+    window-class registration and a startup set_tray called it, and not once
+    set_tray / set_tray_image ran on every tray state change and animation
+    frame - twice a second, the process's 10,000-object GDI quota was gone in
+    about 14 minutes, and every drawing in it failed. The window class holds
+    these icons for the life of the process anyway, so one load is the right
+    count.
     """
+    global _app_icons
+    if _app_icons is None:
+        _app_icons = _load_app_icons_uncached()
+    return _app_icons
+
+
+def _load_app_icons_uncached() -> tuple[int, int]:
+    """The one load behind _load_app_icons."""
     u = native.user32
     # HICON/HANDLE returns must be pointer-width, or ctypes truncates them to a
     # 32-bit int and hands back an invalid handle.

@@ -1920,3 +1920,24 @@ def test_badged_icon_draws_the_dot_into_a_new_icon():
     assert badged and badged != h_small
     wb.native.user32.DestroyIcon.argtypes = (ctypes.c_void_p,)
     assert wb.native.user32.DestroyIcon(ctypes.c_void_p(badged))
+
+
+def test_app_icons_are_loaded_once():
+    """crftwr/keyhac#185: every set_tray / set_tray_image loaded the app icons
+    afresh and never freed them - +6 GDI / +2 USER per call, the GDI quota
+    gone in ~14 minutes of tray animation. Loaded once, the handles repeat
+    and the process's GDI count stays flat."""
+    from puikit.backends import windows_backend as wb
+
+    first = wb._load_app_icons()
+    get_gui = wb.native.user32.GetGuiResources
+    get_gui.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    get_gui.restype = ctypes.c_uint
+    kernel = ctypes.WinDLL("kernel32")
+    kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    process = kernel.GetCurrentProcess()
+    GR_GDIOBJECTS = 0
+    before = get_gui(process, GR_GDIOBJECTS)
+    for _ in range(50):
+        assert wb._load_app_icons() == first
+    assert get_gui(process, GR_GDIOBJECTS) == before

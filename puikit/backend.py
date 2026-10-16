@@ -1105,6 +1105,15 @@ class Backend(ABC):
         backends that cannot hide their surface."""
         return True
 
+    def is_main_window_active(self) -> bool:
+        """Whether the main window is the one the user is working in now:
+        shown *and* the active window taking keyboard input - not merely
+        visible, which a window covered by others also is. For acting on
+        "the user has looked at it", such as marking messages read. Base
+        returns is_main_window_visible(), the closest answer a backend
+        without window activation can give."""
+        return self.is_main_window_visible()
+
     def pointer_position_px(self) -> tuple[float, float] | None:
         """Where the pointer is **now**, in the portable screen coordinates
         ``screen_frames()`` / ``WindowHandle.frame_px()`` report. None where

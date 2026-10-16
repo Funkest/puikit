@@ -1442,3 +1442,7 @@ def test_set_tray_image_without_an_item_does_nothing(tmp_path):
     backend = MacOSBackend()
     backend.set_tray_image(str(tmp_path / "missing.png"))
     assert backend._status_item is None
+
+
+def test_main_window_active_needs_a_window():
+    assert MacOSBackend().is_main_window_active() is False

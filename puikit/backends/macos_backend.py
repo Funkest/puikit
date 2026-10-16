@@ -2228,6 +2228,13 @@ class MacOSBackend(Backend):
     def is_main_window_visible(self) -> bool:
         return self._window is not None and bool(self._window.isVisible())
 
+    def is_main_window_active(self) -> bool:
+        # The key window of the active application: isKeyWindow alone stays
+        # True for an app in the background, whose key window is only the
+        # one that will take keys when it is activated again.
+        return (self._window is not None and bool(NSApp.isActive())
+                and bool(self._window.isKeyWindow()))
+
     def pointer_position_px(self) -> tuple[float, float] | None:
         """The live pointer, flipped into portable screen coordinates.
         ``NSEvent.mouseLocation`` is a class method: it answers where the

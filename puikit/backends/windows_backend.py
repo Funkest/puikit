@@ -3552,6 +3552,14 @@ class WindowsBackend(Backend):
     def is_main_window_visible(self) -> bool:
         return bool(self._hwnd) and bool(native.user32.IsWindowVisible(self._hwnd))
 
+    def is_main_window_active(self) -> bool:
+        if not self._hwnd:
+            return False
+        u = native.user32
+        u.GetForegroundWindow.argtypes = []
+        u.GetForegroundWindow.restype = ctypes.c_void_p
+        return (u.GetForegroundWindow() or 0) == int(self._hwnd)
+
     def pointer_position_px(self) -> tuple[float, float] | None:
         """The live pointer in virtual-screen pixels, which are already the
         portable top-left convention."""

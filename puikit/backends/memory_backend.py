@@ -191,6 +191,7 @@ class MemoryBackend(Backend):
         # is testable without a real window.
         self._start_hidden = start_hidden
         self._main_window_visible = False
+        self.main_window_active = True  # see is_main_window_active
         self._grid: list[list[str]] = []
         self._styles: list[list[Style]] = []
         self._events: deque[Event] = deque()
@@ -404,6 +405,10 @@ class MemoryBackend(Backend):
 
     def is_main_window_visible(self) -> bool:
         return self._main_window_visible
+
+    def is_main_window_active(self) -> bool:
+        # Tests set this to model "visible but covered by another window".
+        return self._main_window_visible and self.main_window_active
 
     # --- geometry ----------------------------------------------------------
 

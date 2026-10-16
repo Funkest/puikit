@@ -62,3 +62,19 @@ def test_memory_backend_records_image_swaps():
     backend.set_tray_image("/x/a.png")
     assert backend.tray_images == ["/x/b.png", "/x/a.png"]
     assert len(backend.tray_calls) == 1, "the item itself was not restated"
+
+
+def test_main_window_active_defaults_to_visible():
+    """An additive Backend method: a backend without window activation
+    answers as it does for visibility."""
+    backend = MemoryBackend(width=20, height=5)
+    assert Backend.is_main_window_active(backend) == backend.is_main_window_visible()
+
+
+def test_memory_backend_models_a_covered_window():
+    backend = MemoryBackend(width=20, height=5)
+    backend.open()
+    assert backend.is_main_window_visible() and backend.is_main_window_active()
+    backend.main_window_active = False          # shown, but behind another
+    assert backend.is_main_window_visible()
+    assert not backend.is_main_window_active()

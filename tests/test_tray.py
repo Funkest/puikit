@@ -15,9 +15,10 @@ def test_base_signature_is_additive():
     # Pre-image callers pass (title, menu, tooltip) positionally; image must
     # extend the end with a None default, per the additive API policy.
     sig = inspect.signature(Backend.set_tray)
-    assert list(sig.parameters) == ["self", "title", "menu", "tooltip", "image"]
+    assert list(sig.parameters) == ["self", "title", "menu", "tooltip", "image",
+                                    "badge"]
     assert all(sig.parameters[name].default is None
-               for name in ("title", "menu", "tooltip", "image"))
+               for name in ("title", "menu", "tooltip", "image", "badge"))
 
 
 def test_base_raises_capability_not_supported():
@@ -35,3 +36,29 @@ def test_memory_backend_records_image():
         (None, None, None, "/x/MenuExtraTemplate.png"),
         (None, None, None, None),
     ]
+
+
+def test_memory_backend_records_badge_apart_from_the_calls():
+    """badge is appended last with a None default, and recorded in its own
+    list: tray_calls keeps the 4-tuples existing callers unpack."""
+    backend = MemoryBackend(width=20, height=5)
+    backend.set_tray("K", None, "Keyhac", "/x/keyhac.ico")
+    backend.set_tray(image="/x/keyhac.ico", badge=(230, 40, 40))
+    assert backend.tray_calls == [("K", None, "Keyhac", "/x/keyhac.ico"),
+                                  (None, None, None, "/x/keyhac.ico")]
+    assert backend.tray_badges == [None, (230, 40, 40)]
+
+
+def test_set_tray_image_is_a_base_no_op():
+    """A new Backend method with a base no-op, per the additive policy: an
+    animation driver can call it on any backend."""
+    assert Backend.set_tray_image(None, "/x/frame.png") is None
+
+
+def test_memory_backend_records_image_swaps():
+    backend = MemoryBackend(width=20, height=5)
+    backend.set_tray(image="/x/a.png")
+    backend.set_tray_image("/x/b.png")
+    backend.set_tray_image("/x/a.png")
+    assert backend.tray_images == ["/x/b.png", "/x/a.png"]
+    assert len(backend.tray_calls) == 1, "the item itself was not restated"

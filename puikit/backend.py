@@ -1055,7 +1055,8 @@ class Backend(ABC):
     # --- multi-window (capability "multi_window") -----------------------------
 
     def set_tray(self, title: str | None = None, menu: Any = None,
-                 tooltip: str | None = None, image: str | None = None) -> None:
+                 tooltip: str | None = None, image: str | None = None,
+                 badge: tuple[int, int, int] | None = None) -> None:
         """System tray icon / macOS menu bar extra (capability "system_tray").
         ``title`` is short text/emoji shown in the bar. ``image`` is a path to
         an icon file shown instead of the text; formats are per-OS (the caller
@@ -1066,8 +1067,27 @@ class Backend(ABC):
         highlight) and an ``@2x`` sibling file is picked up for Retina. An image the OS cannot
         load falls back to the text / app icon. ``menu`` is a puikit Menu
         opened on click; passing neither ``title`` nor ``image`` removes the
-        item."""
+        item.
+
+        ``badge`` is an ``(r, g, b)`` color for a small filled dot at the
+        icon's top-right corner, the way an app marks something waiting to
+        be seen (an unread error, a pending update); ``None`` (the default)
+        shows none, and each call states the badge afresh. It is drawn *over*
+        the image rather than baked into it, which is what lets it carry a
+        color on macOS: a ``…Template`` image is ink only, recolored by the
+        system, and stays so with a red dot beside it."""
         raise CapabilityNotSupported("system_tray")
+
+    def set_tray_image(self, image: str | None) -> None:
+        """Swap the tray icon's image and nothing else - for animating it.
+
+        ``set_tray`` states the whole item, menu included, and rebuilding a
+        native menu several times a second is both wasteful and liable to
+        disturb one the user has open. This keeps the menu, the tooltip and
+        the badge as the last ``set_tray`` left them. ``image`` takes the
+        same files ``set_tray`` does; ``None`` restores no image. Without a
+        tray item (or without the capability) it does nothing - base no-op,
+        so an animation driver can call it unconditionally."""
 
     def show_main_window(self) -> None:
         """Re-show the main window (used with main_window_close="hide").

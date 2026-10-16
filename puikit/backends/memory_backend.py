@@ -226,6 +226,8 @@ class MemoryBackend(Backend):
         # tests fire them deterministically with fire_timers().
         self.later_timers: list[tuple[float, Any, dict]] = []
         self.tray_calls: list[tuple] = []  # (title, menu, tooltip, image) per set_tray
+        self.tray_badges = []   # set_tray(badge=...) per call, in order
+        self.tray_images = []   # set_tray_image(...) per call, in order
         self.clear()
 
 
@@ -329,8 +331,14 @@ class MemoryBackend(Backend):
         else:
             self._styles_main = value
 
-    def set_tray(self, title=None, menu=None, tooltip=None, image=None) -> None:
+    def set_tray_image(self, image) -> None:
+        self.tray_images.append(image)
+
+    def set_tray(self, title=None, menu=None, tooltip=None, image=None,
+                 badge=None) -> None:
+        # Kept apart from tray_calls, whose 4-tuples callers already unpack.
         self.tray_calls.append((title, menu, tooltip, image))
+        self.tray_badges.append(badge)
 
     def create_window(self, width: int, height: int, title: str = "",
                       style: WindowStyle | None = None) -> _MemoryWindowHandle:

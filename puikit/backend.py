@@ -1055,7 +1055,8 @@ class Backend(ABC):
     # --- multi-window (capability "multi_window") -----------------------------
 
     def set_tray(self, title: str | None = None, menu: Any = None,
-                 tooltip: str | None = None, image: str | None = None) -> None:
+                 tooltip: str | None = None, image: str | None = None,
+                 badge: tuple[int, int, int] | None = None) -> None:
         """System tray icon / macOS menu bar extra (capability "system_tray").
         ``title`` is short text/emoji shown in the bar. ``image`` is a path to
         an icon file shown instead of the text; formats are per-OS (the caller
@@ -1066,7 +1067,15 @@ class Backend(ABC):
         highlight) and an ``@2x`` sibling file is picked up for Retina. An image the OS cannot
         load falls back to the text / app icon. ``menu`` is a puikit Menu
         opened on click; passing neither ``title`` nor ``image`` removes the
-        item."""
+        item.
+
+        ``badge`` is an ``(r, g, b)`` color for a small filled dot at the
+        icon's top-right corner, the way an app marks something waiting to
+        be seen (an unread error, a pending update); ``None`` (the default)
+        shows none, and each call states the badge afresh. It is drawn *over*
+        the image rather than baked into it, which is what lets it carry a
+        color on macOS: a ``…Template`` image is ink only, recolored by the
+        system, and stays so with a red dot beside it."""
         raise CapabilityNotSupported("system_tray")
 
     def show_main_window(self) -> None:

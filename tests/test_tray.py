@@ -15,9 +15,10 @@ def test_base_signature_is_additive():
     # Pre-image callers pass (title, menu, tooltip) positionally; image must
     # extend the end with a None default, per the additive API policy.
     sig = inspect.signature(Backend.set_tray)
-    assert list(sig.parameters) == ["self", "title", "menu", "tooltip", "image"]
+    assert list(sig.parameters) == ["self", "title", "menu", "tooltip", "image",
+                                    "badge"]
     assert all(sig.parameters[name].default is None
-               for name in ("title", "menu", "tooltip", "image"))
+               for name in ("title", "menu", "tooltip", "image", "badge"))
 
 
 def test_base_raises_capability_not_supported():
@@ -35,3 +36,14 @@ def test_memory_backend_records_image():
         (None, None, None, "/x/MenuExtraTemplate.png"),
         (None, None, None, None),
     ]
+
+
+def test_memory_backend_records_badge_apart_from_the_calls():
+    """badge is appended last with a None default, and recorded in its own
+    list: tray_calls keeps the 4-tuples existing callers unpack."""
+    backend = MemoryBackend(width=20, height=5)
+    backend.set_tray("K", None, "Keyhac", "/x/keyhac.ico")
+    backend.set_tray(image="/x/keyhac.ico", badge=(230, 40, 40))
+    assert backend.tray_calls == [("K", None, "Keyhac", "/x/keyhac.ico"),
+                                  (None, None, None, "/x/keyhac.ico")]
+    assert backend.tray_badges == [None, (230, 40, 40)]

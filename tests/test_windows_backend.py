@@ -1904,3 +1904,19 @@ def test_a_press_in_a_secondary_window_captures_that_window(monkeypatch):
         assert captured == [backend._hwnd]
     finally:
         backend.close()
+
+
+def test_badged_icon_draws_the_dot_into_a_new_icon():
+    """set_tray(badge=...) on Windows composites the dot into a copy of the
+    tray icon: a new handle the caller owns, the original left untouched."""
+    import ctypes
+
+    from puikit.backends import windows_backend as wb
+
+    _h_icon, h_small = wb._load_app_icons()
+    if not h_small:
+        pytest.skip("no app icon to badge in this process")
+    badged = wb._badged_icon(h_small, (230, 40, 40))
+    assert badged and badged != h_small
+    wb.native.user32.DestroyIcon.argtypes = (ctypes.c_void_p,)
+    assert wb.native.user32.DestroyIcon(ctypes.c_void_p(badged))

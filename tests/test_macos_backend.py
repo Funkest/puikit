@@ -1387,3 +1387,24 @@ class TestScreenMarkers:
         assert mark in backend._markers
         mark.close()
         assert mark not in backend._markers
+
+
+def test_tray_badge_is_a_dot_over_a_template_image(tmp_path):
+    """The badge is a subview over the status item button, not pixels in
+    the image: the image stays a template, recolored by the system, and only
+    the dot carries a color. Shown, recolored, and removed per call."""
+    image = tmp_path / "MarkTemplate.png"
+    _write_png(image, 18)
+    backend = MacOSBackend()
+    try:
+        backend.set_tray(image=str(image), badge=(230, 40, 40))
+        button = backend._status_item.button()
+        assert button.image().isTemplate()
+        badge = backend._tray_badge
+        assert badge is not None and badge.superview() == button
+        backend.set_tray(image=str(image), badge=(40, 120, 230))
+        assert backend._tray_badge is badge, "recolored in place"
+        backend.set_tray(image=str(image))
+        assert backend._tray_badge is None and badge.superview() is None
+    finally:
+        backend.set_tray()          # remove the status item

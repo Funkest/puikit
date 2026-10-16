@@ -1640,6 +1640,11 @@ def _tray_image_is_template(path: str) -> bool:
     return stem.endswith("Template")
 
 
+#: The tray badge dot's diameter, in points: visible on a 22 pt menu bar
+#: without covering the icon it marks.
+_TRAY_BADGE_SIZE = 6.0
+
+
 def _load_tray_image(path: str):
     """NSImage for a status-item button. Images loaded by *path* get none of
     the ``imageNamed:`` conveniences, so apply them here: add the ``@2x``
@@ -1881,6 +1886,7 @@ class MacOSBackend(Backend):
         self._start_hidden = start_hidden
         self._status_item = None      # NSStatusItem (set_tray)
         self._tray_responder = None   # retained menu responder
+        self._tray_badge = None       # the badge dot's NSView, if shown
         # When set, AppKit persists this window's frame (position + size) to the
         # user defaults under this name and restores it on the next launch — the
         # standard NSWindow frame-autosave feature. None keeps the default of
@@ -2123,7 +2129,8 @@ class MacOSBackend(Backend):
             self._window.orderFrontRegardless()
 
     def set_tray(self, title: str | None = None, menu: Any = None,
-                 tooltip: str | None = None, image: str | None = None) -> None:
+                 tooltip: str | None = None, image: str | None = None,
+                 badge: tuple[int, int, int] | None = None) -> None:
         from AppKit import (NSImageLeading, NSImageOnly, NSNoImage,
                             NSStatusBar, NSVariableStatusItemLength)
         if title is None and image is None:
@@ -2131,6 +2138,7 @@ class MacOSBackend(Backend):
                 NSStatusBar.systemStatusBar().removeStatusItem_(self._status_item)
                 self._status_item = None
                 self._tray_responder = None
+                self._tray_badge = None
             return
         if self._status_item is None:
             self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
@@ -2147,11 +2155,43 @@ class MacOSBackend(Backend):
             button.setImagePosition_(NSImageOnly)
         if tooltip is not None:
             button.setToolTip_(tooltip)
+        self._set_tray_badge(button, badge)
         if menu is not None:
             from ._macos_menu import build_popup_menu
             ns_menu, responder = build_popup_menu(menu)
             self._tray_responder = responder  # NSMenuItem does not retain targets
             self._status_item.setMenu_(ns_menu)
+
+    def _set_tray_badge(self, button, color) -> None:
+        """Show, recolor or remove the badge dot on the status item.
+
+        A layer-backed subview over the button rather than pixels in the
+        image: the image stays a template, so the system keeps recoloring the
+        keycap for light and dark menu bars and for the open-menu highlight,
+        and only the dot carries a fixed color - which a template cannot."""
+        from AppKit import NSColor, NSMakeRect, NSView
+        if color is None:
+            if self._tray_badge is not None:
+                self._tray_badge.removeFromSuperview()
+                self._tray_badge = None
+            return
+        if self._tray_badge is None:
+            bounds = button.bounds()
+            size = _TRAY_BADGE_SIZE
+            view = NSView.alloc().initWithFrame_(NSMakeRect(
+                bounds.size.width - size - 1, bounds.size.height - size - 2,
+                size, size))
+            view.setWantsLayer_(True)
+            view.layer().setCornerRadius_(size / 2)
+            # Pinned to the top-right as the button grows or shrinks
+            # (NSViewMinXMargin | NSViewMinYMargin).
+            view.setAutoresizingMask_(1 | 8)
+            button.addSubview_(view)
+            self._tray_badge = view
+        r, g, b = color
+        self._tray_badge.layer().setBackgroundColor_(
+            NSColor.colorWithSRGBRed_green_blue_alpha_(
+                r / 255, g / 255, b / 255, 1.0).CGColor())
 
     def show_main_window(self) -> None:
         if self._window is not None:

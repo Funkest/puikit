@@ -740,6 +740,91 @@ def _load_icon_file(path: str) -> int:
     ) or 0
 
 
+class _ICONINFO(ctypes.Structure):
+    _fields_ = [("fIcon", ctypes.c_int), ("xHotspot", ctypes.c_ulong),
+                ("yHotspot", ctypes.c_ulong), ("hbmMask", ctypes.c_void_p),
+                ("hbmColor", ctypes.c_void_p)]
+
+
+def _badged_icon(h_icon: int, color: tuple[int, int, int]) -> int:
+    """A copy of ``h_icon`` at the small-icon metric with a filled dot in
+    ``color`` at its top-right corner; 0 on failure. The caller owns the
+    returned handle (DestroyIcon).
+
+    Drawn into a 32-bit DIB with straight alpha, which is the form
+    CreateIconIndirect takes for an alpha icon: the icon first (DrawIconEx
+    keeps its alpha), then the dot blended over it with an anti-aliased edge,
+    so it reads as a dot rather than a staircase at 16 px."""
+    if not h_icon:
+        return 0
+    u, g = native.user32, native.gdi32
+    SM_CXSMICON = 49
+    DI_NORMAL = 0x0003
+    size = u.GetSystemMetrics(SM_CXSMICON) or 16
+    u.DrawIconEx.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                             ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                             ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
+    u.DrawIconEx.restype = ctypes.c_int
+    u.CreateIconIndirect.argtypes = [ctypes.POINTER(_ICONINFO)]
+    u.CreateIconIndirect.restype = ctypes.c_void_p
+    g.CreateBitmap.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+                               ctypes.c_uint, ctypes.c_void_p]
+    g.CreateBitmap.restype = ctypes.c_void_p
+
+    hdc = g.CreateCompatibleDC(None)
+    if not hdc:
+        return 0
+    info = native.BITMAPINFO()
+    info.bmiHeader.biSize = ctypes.sizeof(native.BITMAPINFOHEADER)
+    info.bmiHeader.biWidth = size
+    info.bmiHeader.biHeight = -size          # top-down rows
+    info.bmiHeader.biPlanes = 1
+    info.bmiHeader.biBitCount = 32
+    info.bmiHeader.biCompression = native.BI_RGB
+    bits = ctypes.c_void_p()
+    color_bitmap = g.CreateDIBSection(hdc, ctypes.byref(info),
+                                      native.DIB_RGB_COLORS,
+                                      ctypes.byref(bits), None, 0)
+    mask = None
+    try:
+        if not color_bitmap:
+            return 0
+        previous = g.SelectObject(hdc, color_bitmap)
+        u.DrawIconEx(hdc, 0, 0, h_icon, size, size, 0, None, DI_NORMAL)
+        g.SelectObject(hdc, previous)
+
+        pixels = (ctypes.c_ubyte * (size * size * 4)).from_address(bits.value)
+        radius = max(2.5, size * 0.2)
+        cx, cy = size - radius - 0.5, radius + 0.5
+        red, green, blue = color
+        for y in range(size):
+            for x in range(size):
+                # Coverage of this pixel by the dot, from the distance of its
+                # centre to the edge: a one-pixel ramp is the anti-aliasing.
+                distance = ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2) ** 0.5
+                cover = min(1.0, max(0.0, radius + 0.5 - distance))
+                if cover <= 0:
+                    continue
+                i = (y * size + x) * 4
+                under_a = pixels[i + 3] / 255
+                out_a = cover + under_a * (1 - cover)
+                for c, value in ((0, blue), (1, green), (2, red)):
+                    pixels[i + c] = int(round(
+                        (value * cover + pixels[i + c] * under_a * (1 - cover))
+                        / out_a)) if out_a else 0
+                pixels[i + 3] = int(round(out_a * 255))
+
+        mask = g.CreateBitmap(size, size, 1, 1, None)
+        icon_info = _ICONINFO(1, 0, 0, mask, color_bitmap)
+        return u.CreateIconIndirect(ctypes.byref(icon_info)) or 0
+    finally:
+        if mask:
+            g.DeleteObject(mask)
+        if color_bitmap:
+            g.DeleteObject(color_bitmap)
+        g.DeleteDC(hdc)
+
+
 def _register_window_class() -> None:
     global _class_registered
     if _class_registered:
@@ -3372,7 +3457,8 @@ class WindowsBackend(Backend):
         native.user32.SetMenu(self._hwnd, self._menu_bar_hmenu)
 
     def set_tray(self, title: str | None = None, menu: Any = None,
-                 tooltip: str | None = None, image: str | None = None) -> None:
+                 tooltip: str | None = None, image: str | None = None,
+                 badge: tuple[int, int, int] | None = None) -> None:
         """System tray icon (Shell_NotifyIconW). ``image`` is a path to a
         ``.ico``, loaded at the small-icon metric; without it (or when loading
         fails) the icon is the host exe's embedded icon (same as the window
@@ -3392,6 +3478,14 @@ class WindowsBackend(Backend):
             return
         h_file_icon = _load_icon_file(image) if image is not None else 0
         h_icon, h_icon_sm = _load_app_icons()
+        if badge is not None:
+            # A new icon with the dot drawn in, owned like a loaded file icon.
+            badged = _badged_icon(h_file_icon or h_icon_sm or h_icon, badge)
+            if badged:
+                if h_file_icon:
+                    native.user32.DestroyIcon.argtypes = (ctypes.c_void_p,)
+                    native.user32.DestroyIcon(ctypes.c_void_p(h_file_icon))
+                h_file_icon = badged
         data.uFlags = native.NIF_MESSAGE | native.NIF_ICON | native.NIF_TIP
         data.uCallbackMessage = _WM_TRAY_CALLBACK
         data.hIcon = h_file_icon or h_icon_sm or h_icon

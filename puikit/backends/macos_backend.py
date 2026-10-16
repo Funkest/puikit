@@ -2178,14 +2178,19 @@ class MacOSBackend(Backend):
         if self._tray_badge is None:
             bounds = button.bounds()
             size = _TRAY_BADGE_SIZE
+            # The status bar button is flipped (y grows down) - measured: a
+            # dot placed by unflipped arithmetic landed bottom-right - so the
+            # top margin is the small y there, and the large one otherwise.
+            flipped = bool(button.isFlipped())
+            top = 2 if flipped else bounds.size.height - size - 2
             view = NSView.alloc().initWithFrame_(NSMakeRect(
-                bounds.size.width - size - 1, bounds.size.height - size - 2,
-                size, size))
+                bounds.size.width - size - 1, top, size, size))
             view.setWantsLayer_(True)
             view.layer().setCornerRadius_(size / 2)
-            # Pinned to the top-right as the button grows or shrinks
-            # (NSViewMinXMargin | NSViewMinYMargin).
-            view.setAutoresizingMask_(1 | 8)
+            # Pinned to the top-right as the button grows or shrinks:
+            # NSViewMinXMargin, plus the margin below the dot - MaxY when the
+            # view is flipped, MinY when it is not.
+            view.setAutoresizingMask_(1 | (32 if flipped else 8))
             button.addSubview_(view)
             self._tray_badge = view
         r, g, b = color

@@ -1078,6 +1078,17 @@ class Backend(ABC):
         system, and stays so with a red dot beside it."""
         raise CapabilityNotSupported("system_tray")
 
+    def set_tray_image(self, image: str | None) -> None:
+        """Swap the tray icon's image and nothing else - for animating it.
+
+        ``set_tray`` states the whole item, menu included, and rebuilding a
+        native menu several times a second is both wasteful and liable to
+        disturb one the user has open. This keeps the menu, the tooltip and
+        the badge as the last ``set_tray`` left them. ``image`` takes the
+        same files ``set_tray`` does; ``None`` restores no image. Without a
+        tray item (or without the capability) it does nothing - base no-op,
+        so an animation driver can call it unconditionally."""
+
     def show_main_window(self) -> None:
         """Re-show the main window (used with main_window_close="hide").
         Base is a no-op."""

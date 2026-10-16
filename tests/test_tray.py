@@ -47,3 +47,18 @@ def test_memory_backend_records_badge_apart_from_the_calls():
     assert backend.tray_calls == [("K", None, "Keyhac", "/x/keyhac.ico"),
                                   (None, None, None, "/x/keyhac.ico")]
     assert backend.tray_badges == [None, (230, 40, 40)]
+
+
+def test_set_tray_image_is_a_base_no_op():
+    """A new Backend method with a base no-op, per the additive policy: an
+    animation driver can call it on any backend."""
+    assert Backend.set_tray_image(None, "/x/frame.png") is None
+
+
+def test_memory_backend_records_image_swaps():
+    backend = MemoryBackend(width=20, height=5)
+    backend.set_tray(image="/x/a.png")
+    backend.set_tray_image("/x/b.png")
+    backend.set_tray_image("/x/a.png")
+    assert backend.tray_images == ["/x/b.png", "/x/a.png"]
+    assert len(backend.tray_calls) == 1, "the item itself was not restated"

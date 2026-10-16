@@ -952,6 +952,7 @@ class WindowsBackend(Backend):
         self._tray_installed = False
         self._tray_menu = None
         self._tray_hicon = 0  # HICON loaded from set_tray(image=…); ours to destroy
+        self._tray_badge = None  # the badge color, re-drawn on each image swap
         # Windows has no built-in analogue of AppKit's NSWindow frame-autosave,
         # so this is emulated with a registry value under this name: the frame
         # is restored from it on open() and written back to it in close().
@@ -3478,6 +3479,7 @@ class WindowsBackend(Backend):
             return
         h_file_icon = _load_icon_file(image) if image is not None else 0
         h_icon, h_icon_sm = _load_app_icons()
+        self._tray_badge = badge
         if badge is not None:
             # A new icon with the dot drawn in, owned like a loaded file icon.
             badged = _badged_icon(h_file_icon or h_icon_sm or h_icon, badge)
@@ -3500,6 +3502,32 @@ class WindowsBackend(Backend):
         self._tray_hicon = h_file_icon
         self._tray_installed = True
         self._tray_menu = menu
+
+    def set_tray_image(self, image: str | None) -> None:
+        """Swap the icon alone (NIM_MODIFY with NIF_ICON): the menu and the
+        tooltip stay as set_tray left them. The badge is part of the icon's
+        pixels here, so it is drawn onto the new image too."""
+        if not self._tray_installed:
+            return
+        h_file_icon = _load_icon_file(image) if image is not None else 0
+        h_icon, h_icon_sm = _load_app_icons()
+        if self._tray_badge is not None:
+            badged = _badged_icon(h_file_icon or h_icon_sm or h_icon,
+                                  self._tray_badge)
+            if badged:
+                if h_file_icon:
+                    native.user32.DestroyIcon.argtypes = (ctypes.c_void_p,)
+                    native.user32.DestroyIcon(ctypes.c_void_p(h_file_icon))
+                h_file_icon = badged
+        data = native.NOTIFYICONDATAW()
+        data.cbSize = ctypes.sizeof(native.NOTIFYICONDATAW)
+        data.hWnd = self._hwnd
+        data.uID = _TRAY_ICON_ID
+        data.uFlags = native.NIF_ICON
+        data.hIcon = h_file_icon or h_icon_sm or h_icon
+        native.shell32.Shell_NotifyIconW(native.NIM_MODIFY, ctypes.byref(data))
+        self._destroy_tray_icon()
+        self._tray_hicon = h_file_icon
 
     def _destroy_tray_icon(self) -> None:
         if self._tray_hicon:

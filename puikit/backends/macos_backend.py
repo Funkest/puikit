@@ -1887,6 +1887,7 @@ class MacOSBackend(Backend):
         self._status_item = None      # NSStatusItem (set_tray)
         self._tray_responder = None   # retained menu responder
         self._tray_badge = None       # the badge dot's NSView, if shown
+        self._tray_images = {}        # path -> NSImage, for set_tray_image frames
         # When set, AppKit persists this window's frame (position + size) to the
         # user defaults under this name and restores it on the next launch — the
         # standard NSWindow frame-autosave feature. None keeps the default of
@@ -2161,6 +2162,22 @@ class MacOSBackend(Backend):
             ns_menu, responder = build_popup_menu(menu)
             self._tray_responder = responder  # NSMenuItem does not retain targets
             self._status_item.setMenu_(ns_menu)
+
+    def set_tray_image(self, image: str | None) -> None:
+        if self._status_item is None:
+            return
+        # Loaded once per path: an animation alternates a few frames several
+        # times a second, and each load reads the file and its @2x sibling.
+        if image is None:
+            ns_image = None
+        else:
+            ns_image = self._tray_images.get(image)
+            if ns_image is None:
+                ns_image = _load_tray_image(image)
+                if ns_image is None:
+                    return
+                self._tray_images[image] = ns_image
+        self._status_item.button().setImage_(ns_image)
 
     def _set_tray_badge(self, button, color) -> None:
         """Show, recolor or remove the badge dot on the status item.

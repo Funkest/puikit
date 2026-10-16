@@ -1408,3 +1408,37 @@ def test_tray_badge_is_a_dot_over_a_template_image(tmp_path):
         assert backend._tray_badge is None and badge.superview() is None
     finally:
         backend.set_tray()          # remove the status item
+
+
+def test_set_tray_image_swaps_the_image_and_keeps_the_rest(tmp_path):
+    """For animation: the menu, tooltip and badge set_tray stated stay; only
+    the image changes, and each frame is loaded once."""
+    from puikit import Menu, MenuItem
+
+    first = tmp_path / "AFrameTemplate.png"
+    second = tmp_path / "BFrameTemplate.png"
+    _write_png(first, 18)
+    _write_png(second, 18)
+    backend = MacOSBackend()
+    try:
+        backend.set_tray(menu=Menu(MenuItem("Quit")), tooltip="probe",
+                         image=str(first), badge=(230, 40, 40))
+        button = backend._status_item.button()
+        menu = backend._status_item.menu()
+        backend.set_tray_image(str(second))
+        swapped = button.image()
+        assert swapped is not None and swapped.isTemplate()
+        backend.set_tray_image(str(first))
+        backend.set_tray_image(str(second))
+        assert button.image() is swapped, "loaded once, reused"
+        assert backend._status_item.menu() is menu
+        assert button.toolTip() == "probe"
+        assert backend._tray_badge is not None
+    finally:
+        backend.set_tray()
+
+
+def test_set_tray_image_without_an_item_does_nothing(tmp_path):
+    backend = MacOSBackend()
+    backend.set_tray_image(str(tmp_path / "missing.png"))
+    assert backend._status_item is None

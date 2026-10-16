@@ -227,6 +227,7 @@ class MemoryBackend(Backend):
         self.later_timers: list[tuple[float, Any, dict]] = []
         self.tray_calls: list[tuple] = []  # (title, menu, tooltip, image) per set_tray
         self.tray_badges = []   # set_tray(badge=...) per call, in order
+        self.tray_images = []   # set_tray_image(...) per call, in order
         self.clear()
 
 
@@ -329,6 +330,9 @@ class MemoryBackend(Backend):
             self._active_win.styles = value
         else:
             self._styles_main = value
+
+    def set_tray_image(self, image) -> None:
+        self.tray_images.append(image)
 
     def set_tray(self, title=None, menu=None, tooltip=None, image=None,
                  badge=None) -> None:

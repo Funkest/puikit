@@ -187,6 +187,21 @@ def test_terminal_bare_escape_is_still_the_escape_key():
     assert events[0].key == "escape"
 
 
+def test_horizontal_wheel_is_not_a_vertical_scroll():
+    # 66 / 67 used to arrive as scroll=-1 both ways (xefm#657).
+    be = CursesBackend()
+    be._stdscr = _FakeStdscr(_sgr("[<67;2;2M") + _sgr("[<67;2;2M") + _sgr("[<65;2;2M"))
+    events = []
+    for _ in range(3):
+        be.run_event_loop_iteration(events.append, timeout_ms=0)
+    # A run sums on its own axis and ends where the axis changes.
+    assert [(e.scroll, e.hints.get("scroll_units_x")) for e in events] == [
+        (0, -2.0), (-1, None)]
+    be._stdscr = _FakeStdscr(_sgr("[<66;2;2M"))
+    be.run_event_loop_iteration(events.append, timeout_ms=0)
+    assert (events[-1].scroll, events[-1].hints["scroll_units_x"]) == (0, 1.0)
+
+
 def test_terminal_escape_right_before_a_mouse_report_keeps_the_report():
     # ESC ESC [<65;2;2M: the second ESC opens the wheel report, which must not
     # be typed into the app (xefm#656).

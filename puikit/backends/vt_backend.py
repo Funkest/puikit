@@ -967,13 +967,18 @@ class VTBackend(Backend):
             notches = record.get("wheel", 0)
             if not notches:
                 return []
-            hints = {}
             if record.get("axis") == "h":
-                # A horizontal wheel reports on the same scroll field; hand it
-                # to the Panel as a horizontal sub-unit delta as well.
-                hints = {"scroll_units_x": float(notches)}
+                # Horizontal only, as the GUI backends report it: ``scroll`` is
+                # the vertical notch, and a horizontal one carried there too
+                # scrolled every list vertically — a trackpad drifting sideways
+                # mid-scroll moved the listing back up (xefm#657). The record
+                # counts rightward as positive (Windows' HWHEEL); the contract
+                # mirrors "up/away", so rightward is a NEGATIVE unit delta.
+                return [Event(EventType.MOUSE_SCROLL, x=x, y=y, scroll=0,
+                              modifiers=mods,
+                              hints={"scroll_units_x": -float(notches)})]
             return [Event(EventType.MOUSE_SCROLL, x=x, y=y, scroll=notches,
-                          modifiers=mods, hints=hints)]
+                          modifiers=mods)]
         button = record.get("button") or "left"
         if action == "click":
             return [Event(EventType.MOUSE_CLICK, x=x, y=y, button=button, modifiers=mods)]
@@ -1102,13 +1107,17 @@ def _crop_src(src, fx: float, fy: float, fw: float, fh: float):
     return (sx + fx * sw, sy + fy * sh, fw * sw, fh * sh)
 
 
+def _scroll_axis(event: Event) -> str:
+    return "h" if "scroll_units_x" in event.hints else "v"
+
+
 def _coalesce(events: list[Event]) -> list[Event]:
     """Collapse a burst of same-kind pointer events into one.
 
     A wheel spin or a quick drag delivers a run of records at once, and rendering
     per record caps the wheel's speed and lags the drag behind the pointer. Runs
-    of scrolls sum their notches; runs of drags keep the last position. Order is
-    preserved and nothing of another kind is dropped.
+    of scrolls on one axis sum their notches; runs of drags keep the last
+    position. Order is preserved and nothing of another kind is dropped.
     """
     out: list[Event] = []
     for event in events:
@@ -1118,10 +1127,15 @@ def _coalesce(events: list[Event]) -> list[Event]:
         last = out[-1]
         if (event.type is EventType.MOUSE_SCROLL
                 and last.type is EventType.MOUSE_SCROLL
-                and last.modifiers == event.modifiers):
+                and last.modifiers == event.modifiers
+                and _scroll_axis(last) == _scroll_axis(event)):
+            hints = event.hints
+            if _scroll_axis(event) == "h":
+                hints = {"scroll_units_x": last.hints["scroll_units_x"]
+                         + event.hints["scroll_units_x"]}
             out[-1] = Event(EventType.MOUSE_SCROLL, x=event.x, y=event.y,
                             scroll=last.scroll + event.scroll,
-                            modifiers=event.modifiers, hints=event.hints)
+                            modifiers=event.modifiers, hints=hints)
         elif (event.type is EventType.MOUSE_DRAG
                 and last.type is EventType.MOUSE_DRAG
                 and last.button == event.button):

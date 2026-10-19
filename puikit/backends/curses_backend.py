@@ -1984,9 +1984,14 @@ class CursesBackend(Backend):
         Hover / drag has no accumulation: the newest report supersedes the queued
         ones entirely, so only its final position is drawn."""
         if acc.type is EventType.MOUSE_SCROLL:
-            if nxt.type is EventType.MOUSE_SCROLL and nxt.modifiers == acc.modifiers:
+            ax = acc.hints.get("scroll_units_x")
+            nx = nxt.hints.get("scroll_units_x") if nxt.type is EventType.MOUSE_SCROLL else None
+            if (nxt.type is EventType.MOUSE_SCROLL and nxt.modifiers == acc.modifiers
+                    and (ax is None) == (nx is None)):  # one axis per run
+                hints = {"scroll_units_x": ax + nx} if ax is not None else {}
                 return Event(type=EventType.MOUSE_SCROLL, x=nxt.x, y=nxt.y,
-                             scroll=acc.scroll + nxt.scroll, modifiers=acc.modifiers)
+                             scroll=acc.scroll + nxt.scroll, modifiers=acc.modifiers,
+                             hints=hints)
             return None
         if nxt.type is acc.type:  # MOUSE_MOVE / MOUSE_DRAG: latest position wins
             return nxt
@@ -2133,7 +2138,15 @@ class CursesBackend(Backend):
         x, y = x - 1, y - 1
         mods = self._sgr_modifiers(b)
         if b & self._SGR_WHEEL:
-            scroll = 1 if (b & self._SGR_BUTTON) == 0 else -1  # 64=up, 65=down
+            low = b & self._SGR_BUTTON
+            if low in (2, 3):
+                # 66 left, 67 right: horizontal only, never a vertical notch —
+                # both used to scroll the list down (xefm#657). Rightward is a
+                # negative unit delta, as on every other backend.
+                return Event(type=EventType.MOUSE_SCROLL, x=x, y=y, scroll=0,
+                             modifiers=mods,
+                             hints={"scroll_units_x": 1.0 if low == 2 else -1.0})
+            scroll = 1 if low == 0 else -1  # 64=up, 65=down
             return Event(type=EventType.MOUSE_SCROLL, x=x, y=y, scroll=scroll, modifiers=mods)
         button = {0: "left", 1: "middle", 2: "right"}.get(b & self._SGR_BUTTON, "left")
         if final == "m":  # button release

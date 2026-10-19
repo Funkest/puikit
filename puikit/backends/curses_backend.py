@@ -487,6 +487,9 @@ class CursesBackend(Backend):
         # belong to the run (see _coalesce_input): stashed here so the next loop
         # iteration delivers it instead of dropping it.
         self._pending_event: "Event | None" = None
+        # An ESC read while collecting an escape sequence: it opens the NEXT
+        # one, so it is handed back to the next read (see _collect_escape).
+        self._pushback: "str | None" = None
         # Self-driven animation ticks (capability "animation_ticks"). A terminal
         # cannot composite a transition, but the event loop already wakes on a
         # timer, so a registered callback (a busy spinner, a blinking caret) is
@@ -1907,7 +1910,7 @@ class CursesBackend(Backend):
         # keys, and raises on timeout with no input.
         start = time.monotonic()
         try:
-            ch = self._stdscr.get_wch()
+            ch = self._get_wch()
         except curses.error:
             # Idle wake (timed out with no input): note it for dead-terminal
             # detection, advance any self-driven animation (which re-renders
@@ -1927,6 +1930,13 @@ class CursesBackend(Backend):
                 event = self._coalesce_input(event)
             handler(event)
         return not self._quit_requested
+
+    def _get_wch(self) -> "int | str":
+        """``get_wch()``, after any ESC that _collect_escape handed back."""
+        if self._pushback is not None:
+            ch, self._pushback = self._pushback, None
+            return ch
+        return self._stdscr.get_wch()
 
     def _char_to_event(self, ch: "int | str") -> "Event | None":
         # An ESC may begin an SGR mouse report (ESC [ < b ; x ; y M/m). Mouse
@@ -1951,7 +1961,7 @@ class CursesBackend(Backend):
         self._stdscr.timeout(0)  # non-blocking: only what is already buffered
         while True:
             try:
-                ch = self._stdscr.get_wch()
+                ch = self._get_wch()
             except curses.error:
                 break  # nothing more buffered
             nxt = self._char_to_event(ch)
@@ -2009,11 +2019,16 @@ class CursesBackend(Backend):
         buf = ""
         for _ in range(32):
             try:
-                c = self._stdscr.get_wch()
+                c = self._get_wch()
             except curses.error:
                 break
             if isinstance(c, int):
                 break  # a keycode mid-sequence: not part of an ANSI escape
+            if c == "\x1b":
+                # The next sequence's ESC: this one was the Escape key, and the
+                # next read starts there instead of typing its body (xefm#656).
+                self._pushback = c
+                break
             buf += c
             if _escape_complete(buf):
                 break

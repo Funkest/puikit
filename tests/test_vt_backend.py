@@ -286,7 +286,7 @@ def test_underline_color_is_dropped_where_sgr_58_cannot_be_sent(backend):
 def test_terminal_app_is_not_sent_sgr_58():
     # It abandons the whole sequence at the first colon, losing the underline
     # attribute and the row's colors with it (xefm#350).
-    assert not _supports_underline_color({"TERM_PROGRAM": "Apple_Terminal", "TERM": "xterm-256color"})
+    assert not _supports_underline_color({"TERM_PROGRAM": "Apple_Terminal", "TERM": "xterm-256color"}, windows=False)
 
 
 def test_an_unknown_terminal_is_not_sent_sgr_58():
@@ -313,7 +313,25 @@ def test_multiplexers_are_not_sent_sgr_58():
     {"TERM": "alacritty"},
 ])
 def test_terminals_that_implement_sgr_58_are(env):
-    assert _supports_underline_color(env)
+    assert _supports_underline_color(env, windows=False)
+
+
+def test_on_windows_only_windows_terminal_is_sent_sgr_58():
+    # Everything else reaches the emulator through a ConPTY that may drop it —
+    # WezTerm 20240203 lost the cursor row's rule entirely (xefm#629).
+    assert _supports_underline_color({"WT_SESSION": "abc"}, windows=True)
+    assert not _supports_underline_color({"TERM_PROGRAM": "WezTerm"}, windows=True)
+    assert not _supports_underline_color({"TERM": "xterm-kitty"}, windows=True)
+    # A host started from a Windows Terminal tab inherits WT_SESSION.
+    assert not _supports_underline_color({"WT_SESSION": "abc", "TERM_PROGRAM": "WezTerm"},
+                                         windows=True)
+
+
+def test_on_windows_the_override_still_wins():
+    assert _supports_underline_color({"PUIKIT_UNDERLINE_COLOR": "1",
+                                      "TERM_PROGRAM": "WezTerm"}, windows=True)
+    assert not _supports_underline_color({"PUIKIT_UNDERLINE_COLOR": "0",
+                                          "WT_SESSION": "abc"}, windows=True)
 
 
 def test_a_version_below_the_floor_is_not():

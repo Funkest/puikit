@@ -202,6 +202,18 @@ def test_horizontal_wheel_is_not_a_vertical_scroll():
     assert (events[-1].scroll, events[-1].hints["scroll_units_x"]) == (0, 1.0)
 
 
+def test_terminal_escape_right_before_a_mouse_report_keeps_the_report():
+    # ESC ESC [<65;2;2M: the second ESC opens the wheel report, which must not
+    # be typed into the app (xefm#656).
+    be = CursesBackend()
+    be._stdscr = _FakeStdscr(["\x1b", "\x1b"] + list("[<65;2;2M"))
+    events = []
+    be.run_event_loop_iteration(events.append, timeout_ms=0)
+    be.run_event_loop_iteration(events.append, timeout_ms=0)
+    assert [e.type for e in events] == [EventType.KEY, EventType.MOUSE_SCROLL]
+    assert events[0].key == "escape" and events[1].scroll == -1
+
+
 def test_sgr_modifiers_decode_shift():
     be = CursesBackend()
     assert "shift" in be._sgr_modifiers(0x04)

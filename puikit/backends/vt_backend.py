@@ -176,7 +176,8 @@ def _version_at_least(value: str | None, floor: int) -> bool:
     return found is not None and int(found.group()) >= floor
 
 
-def _supports_underline_color(env: dict[str, str] | None = None) -> bool:
+def _supports_underline_color(env: dict[str, str] | None = None,
+                              windows: bool = _IS_WINDOWS) -> bool:
     """Whether this terminal IMPLEMENTS a colored underline (SGR 58).
 
     A WHITELIST, not a blacklist, because the two ways to get this wrong are not
@@ -200,7 +201,17 @@ def _supports_underline_color(env: dict[str, str] | None = None) -> bool:
     version the guess assumes, and being wrong there costs the color, not the
     pen. ``PUIKIT_UNDERLINE_COLOR=1`` forces it on for a terminal not listed
     here, ``=0`` off for one that is. ``env`` defaults to ``os.environ`` and is
-    injectable for tests.
+    injectable for tests, as is ``windows``.
+
+    On Windows the question is not the emulator's alone: the bytes reach it
+    through ConPTY, which re-renders the screen and forwards only what it
+    understands. Windows Terminal ships its own, current one; any other host
+    brings whatever ConPTY it bundled or the system's, and WezTerm 20240203 —
+    on the list above for what it draws natively — showed neither the rule nor
+    the brackets that replace it (xefm#629). So on Windows only Windows
+    Terminal is trusted, and only when no other host has named itself in
+    TERM_PROGRAM, since a host started from a Windows Terminal tab inherits its
+    WT_SESSION.
     """
     env = os.environ if env is None else env
     override = (env.get("PUIKIT_UNDERLINE_COLOR") or "").strip().lower()
@@ -208,6 +219,8 @@ def _supports_underline_color(env: dict[str, str] | None = None) -> bool:
         return False
     if override in ("1", "on", "yes"):
         return True
+    if windows:
+        return bool(env.get("WT_SESSION")) and not env.get("TERM_PROGRAM")
     # kitty defined the sequence. Windows Terminal parsed it from 1.6 but only
     # DREW it from 1.20, and WT_SESSION is a GUID carrying no version to check.
     if env.get("KITTY_WINDOW_ID") or env.get("WT_SESSION"):

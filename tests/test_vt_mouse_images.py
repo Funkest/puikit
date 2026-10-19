@@ -184,12 +184,27 @@ def test_a_wheel_burst_sums_into_one_event(backend):
     assert events[0].scroll == 5
 
 
-def test_horizontal_wheel_reports_on_the_x_axis(backend):
+def test_horizontal_wheel_reports_on_the_x_axis_only(backend):
+    # A tilt to the right (positive HWHEEL) reveals what is to the right: a
+    # negative unit delta, as on the GUI backends — and no vertical notch, which
+    # every list would read as a scroll up (xefm#657).
     be, con = backend
     con.push_mouse(mouse(flags=0x0008, wheel=120))
     e = drain(be, con)[0]
     assert e.type is EventType.MOUSE_SCROLL
-    assert e.hints.get("scroll_units_x") == 1.0
+    assert e.scroll == 0
+    assert e.hints.get("scroll_units_x") == -1.0
+
+
+def test_a_burst_is_summed_per_axis_never_across(backend):
+    # A trackpad drifting sideways mid-scroll: down, down, right, down.
+    be, con = backend
+    con.push_mouse(mouse(flags=0x0004, wheel=-120), mouse(flags=0x0004, wheel=-120),
+                   mouse(flags=0x0008, wheel=120), mouse(flags=0x0008, wheel=120),
+                   mouse(flags=0x0004, wheel=-120))
+    events = drain(be, con)
+    assert [(e.scroll, e.hints.get("scroll_units_x")) for e in events] == [
+        (-2, None), (0, -2.0), (-1, None)]
 
 
 def test_modifiers_ride_along(backend):

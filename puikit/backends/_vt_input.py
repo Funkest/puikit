@@ -165,6 +165,14 @@ def parse_vt_input(text: str, flush: bool = False) -> tuple[list[dict], str]:
             records.append(_char_record(ch))
             i += 1
             continue
+        if i + 1 < end_of_text and text[i + 1] == "\x1b":
+            # ESC ESC: the first was the Escape key and the second opens what
+            # follows. Taken as an Alt chord instead, it swallowed the second
+            # ESC, and an SGR mouse report right behind an Escape press was
+            # typed into the app — ``;`` and all (xefm#656).
+            records.append(_escape_key_record())
+            i += 1
+            continue
         end = _escape_end(text, i + 1)
         if end is None:
             if not flush:

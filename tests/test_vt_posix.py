@@ -137,6 +137,19 @@ def test_flush_turns_the_esc_into_the_escape_key():
     assert [r["name"] for r in recs] == ["escape"]
 
 
+def test_an_escape_right_before_a_sequence_does_not_swallow_its_esc():
+    # Escape pressed mid-wheel: ESC ESC [<65;60;34M. Read as an Alt+ESC chord,
+    # the second ESC went with the first and the report's body was typed —
+    # its ``;`` opening XeFM's filter with "60;34M" as the pattern (xefm#656).
+    recs = records("\x1b\x1b[<65;60;34M")
+    assert [r.get("name") or r.get("action") for r in recs] == ["escape", "wheel"]
+    # Still held, not typed, when the report has not finished arriving.
+    recs, rest = parse_vt_input("\x1b\x1b[<65;6")
+    assert [r["name"] for r in recs] == ["escape"] and rest == "\x1b[<65;6"
+    # Two Escape presses are two Escape keys.
+    assert [r["name"] for r in records("\x1b\x1b", flush=True)] == ["escape", "escape"]
+
+
 # --- parser: SGR mouse ------------------------------------------------------
 
 

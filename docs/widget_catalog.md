@@ -34,7 +34,7 @@ One implementation each, running unchanged on every backend.
 | `Splitter` | `splitter.py` | Two panes with a draggable divider (drag to resize) |
 | `ListView` | `list.py` | Scrollable selectable rows; text by default (over-long rows clip, or elide with `ellipsis`/`elide_where`), or a widget per row via `row_factory`; `allow_no_selection` permits `selected == -1`, drawn with no highlight at all |
 | `LogView` | `log_view.py` | Virtualized append-only stream; per-line color, wrap, drag-select + copy (a drag held past an edge keeps scrolling, so a selection runs past one screenful), tail-follow |
-| `MarkdownView` | `markdown_view.py` | Scrolling read-only Markdown viewer; proportional prose + monospace/sized headings, clickable links (Tab / Enter from the keyboard; per-view `on_link` handler for any scheme), images; opt-in `selectable` (drag-select + copy as plain **and** rich HTML; a drag held past an edge keeps scrolling) |
+| `MarkdownView` | `markdown_view.py` | Scrolling read-only Markdown viewer; proportional prose + monospace/sized headings, clickable links (Tab / Enter from the keyboard; per-view `on_link` handler for any scheme), images; opt-in `selectable` (drag-select + copy as plain **and** rich HTML; a drag held past an edge keeps scrolling); opt-in `code_copy` (a Copy button above each fenced code block, a Tab stop) |
 | `TreeView` / `TreeNode` | `tree.py` | Expandable hierarchical rows with indentation |
 | `Tabs` | `tabs.py` | Title strip swapping a content pane |
 | `MenuBar` / `MenuPopup` | `menu.py` | Widget-rendered menu fallback (non-`native_menus` backends) |
@@ -209,6 +209,20 @@ Inline mixed styles, links, flowing content.
 - **Outcome:** the styled-run model now lives in `markdown_view.py`; if a second
   consumer appears, lift it (span list + wrap) into a shared helper and let
   `TextBlock` opt in, rather than duplicating it.
+
+##### Code-block Copy button — **shipped**
+`MarkdownView(..., code_copy=True)` puts a **Copy** button above every fenced
+code block, on a row of its own, right-aligned on the block's fill — the one
+GitHub and VS Code show. It rides the link machinery rather than adding a
+second focus model: the button is a span carrying a private href (a NUL-prefixed
+`\x00code-copy:<n>` no real link can spell), so it is a Tab / Shift+Tab stop in
+document order beside the links, Enter or a click activates it, and
+`follow_link` intercepts it before `on_link` sees anything. The block's source
+text goes to `Panel.set_clipboard` (OSC 52 / the OS clipboard, per backend), and
+the label reads *Copied* — the same width in the code face — until the keyboard
+focus moves. The row is chrome: `selection_text` / `selection_html` skip it and a
+search never matches it. Off by default (additive), so an existing view lays out
+unchanged.
 
 ##### Selection + copy — **shipped**
 `MarkdownView(..., selectable=True)` adds read-only text selection: drag-select,

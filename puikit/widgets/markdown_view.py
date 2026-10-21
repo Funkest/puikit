@@ -720,14 +720,19 @@ def _parse_lines(lines: list[str], refs: dict[str, str]) -> list[_SemLine]:
 
         fence = _FENCE_RE.match(raw)
         if fence:
-            marker = fence.group(1)[0]
+            opening = fence.group(1)
             # The info string after the opening fence names the language; its
             # first word drives syntax highlighting (``data`` carries it).
             info = raw[fence.end():].strip()
             lang = info.split()[0] if info else ""
+            # CommonMark's closing fence: the same character, at least as many
+            # of it as opened the block, and nothing after but spaces. So a
+            # block opened with four backticks can hold a line of three — how a
+            # writer embeds text that itself contains a fence.
+            closing = re.compile(r"^\s*" + re.escape(opening[0]) + "{" + str(len(opening)) + r",}\s*$")
             i += 1
             code_lines: list[str] = []
-            while i < n and not lines[i].lstrip().startswith(marker * 3):
+            while i < n and not closing.match(lines[i]):
                 code_lines.append(lines[i])
                 i += 1
             i += 1  # consume the closing fence (or run off the end)

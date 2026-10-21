@@ -1763,3 +1763,15 @@ def test_search_does_not_match_the_button():
 
 def _row_text(backend, y):
     return "".join(backend.snapshot()[y])
+
+
+def test_a_longer_fence_holds_a_shorter_one():
+    sems = parse_markdown("````\n```\ninner\n```\n````\nafter")
+    assert sems[0].block == "code"
+    assert [t for t, _, _ in sems[0].runs] == ["```", "inner", "```"]
+    assert sems[-1].block == "para"
+
+
+def test_a_fence_closes_only_on_its_own_character_and_a_bare_line():
+    sems = parse_markdown("```\n~~~\n``` not a close\n```\n")
+    assert [t for t, _, _ in sems[0].runs] == ["~~~", "``` not a close"]

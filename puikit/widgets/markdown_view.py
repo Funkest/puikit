@@ -60,6 +60,16 @@ its own — an in-app page, its own URL scheme — installs ``on_link``, which s
 every href first, whatever its scheme, and declines what it does not handle;
 the built-in behavior (``#slug`` scrolls, anything else goes to
 ``Panel.open_url``) then applies.
+
+With ``code_copy=True`` every fenced code block gets a **Copy** button on a row
+of its own above the block, right-aligned on the block's fill — the one GitHub
+and VS Code put on theirs. It is a stop in the same Tab order as the links, so
+Enter copies the block from the keyboard (a terminal has no hover to reveal it),
+and a click copies it too; the block's text goes to ``Panel.set_clipboard``
+exactly as written in the source, and the button reads *Copied* until the focus
+moves on. The button never reaches ``on_link``, and a selection that spans it
+leaves it out. Off by default, so a document view that never asked for it lays
+out exactly as before.
 """
 
 from __future__ import annotations
@@ -146,6 +156,14 @@ _TABLE_BORDER = 1.0
 # Inner left/right padding of a fenced code block, in base units, so the text
 # does not sit flush against the edge of its filled background.
 _CODE_PAD = 1.0
+# The code-copy button's label, and what it reads once it has copied. Equal
+# lengths in the monospace code face, so the swap does not move the button.
+_COPY_LABEL = " Copy "
+_COPIED_LABEL = "Copied"
+# The href a code-copy button carries in place of a URL: never a real link (a
+# NUL cannot appear in one), so it is told apart without a separate span kind,
+# and it is intercepted before ``on_link`` sees anything.
+_COPY_HREF = "\x00code-copy:"
 
 # Syntax palette (VS Code Dark+ hues, tuned to read on the code block's fill) and
 # the neutral default when a token has no category. Categories mirror the seven
@@ -332,6 +350,12 @@ class _Row:
     # Carried so a rich (HTML) copy of a selection can wrap the row in <h1>..<h6>
     # rather than losing the heading to a flat bold line.
     heading: int = 0
+    # The ordinal of the code block whose Copy button this row carries
+    # (``code_copy``), else -1. Its fill starts at ``fill_x`` rather than at
+    # the right-aligned button, and it is chrome, not text: a selection or a
+    # search never sees it.
+    copy_block: int = -1
+    fill_x: float | None = None
 
 
 @dataclass
@@ -670,6 +694,12 @@ def _collect_refs(lines: list[str]) -> tuple[dict[str, str], list[str]]:
     return refs, kept
 
 
+def _code_texts(sems: list[_SemLine]) -> list[str]:
+    """Each fenced code block's text, in document order, as its source lines
+    joined — what that block's Copy button puts on the clipboard."""
+    return ["\n".join(t for t, _, _ in sem.runs) for sem in sems if sem.block == "code"]
+
+
 def parse_markdown(src: str) -> list[_SemLine]:
     """Parse Markdown source into the semantic line list the view lays out."""
     lines = src.split("\n")
@@ -690,14 +720,19 @@ def _parse_lines(lines: list[str], refs: dict[str, str]) -> list[_SemLine]:
 
         fence = _FENCE_RE.match(raw)
         if fence:
-            marker = fence.group(1)[0]
+            opening = fence.group(1)
             # The info string after the opening fence names the language; its
             # first word drives syntax highlighting (``data`` carries it).
             info = raw[fence.end():].strip()
             lang = info.split()[0] if info else ""
+            # CommonMark's closing fence: the same character, at least as many
+            # of it as opened the block, and nothing after but spaces. So a
+            # block opened with four backticks can hold a line of three — how a
+            # writer embeds text that itself contains a fence.
+            closing = re.compile(r"^\s*" + re.escape(opening[0]) + "{" + str(len(opening)) + r",}\s*$")
             i += 1
             code_lines: list[str] = []
-            while i < n and not lines[i].lstrip().startswith(marker * 3):
+            while i < n and not closing.match(lines[i]):
                 code_lines.append(lines[i])
                 i += 1
             i += 1  # consume the closing fence (or run off the end)
@@ -1002,8 +1037,14 @@ class MarkdownView(Widget):
         selectable: bool = False,
         base_dir: str | None = None,
         on_link: Callable[[str], bool] | None = None,
+        code_copy: bool = False,
     ):
         self.style = style
+        #: A Copy button above every fenced code block (see the module doc).
+        self.code_copy = code_copy
+        # The code block whose button last copied, so it reads "Copied"; -1
+        # for none. Reset when the keyboard focus moves or the source changes.
+        self._copied_block = -1
         #: Link handler, per view: called with a followed link's href, exactly
         #: as written, before anything else happens to it — by a click or by
         #: Enter on a keyboard-focused link. Return True to say it was handled;
@@ -1025,6 +1066,7 @@ class MarkdownView(Widget):
         # only; dropped on a terminal). Resolved to absolute points at layout.
         self.heading_scales = heading_scales
         self._sems: list[_SemLine] = parse_markdown(source)
+        self._code_texts = _code_texts(self._sems)
 
         # Top of the viewport, in base units.
         self.offset: float = 0.0
@@ -1165,6 +1207,8 @@ class MarkdownView(Widget):
 
     def set_source(self, source: str) -> None:
         self._sems = parse_markdown(source)
+        self._code_texts = _code_texts(self._sems)
+        self._copied_block = -1
         self.offset = 0.0
         self._rows = None
         self._wrap_width = -1.0
@@ -1296,6 +1340,7 @@ class MarkdownView(Widget):
         body_size = lc.measure_font_size(Style(font=self.text_font))
         rows: list[_Row] = []
         anchors: list[tuple[str, int]] = []  # (slug, first row index) per heading
+        code_index = 0
         for sem in self._sems:
             qd = sem.quote_depth
             qind = qd * _QUOTE_INDENT
@@ -1308,6 +1353,10 @@ class MarkdownView(Widget):
                 rows.append(_Row(0.0, [], self._line_pitch, rule=True, quote=qd))
                 continue
             if sem.block == "code":
+                if self.code_copy:
+                    rows.append(self._copy_row(code_index, width, measure, line_height,
+                                               theme, qd))
+                code_index += 1
                 rows.extend(self._layout_code(sem, width, measure, line_height, theme, qd))
                 continue
             if sem.block == "table" and sem.table is not None:
@@ -1438,6 +1487,21 @@ class MarkdownView(Widget):
             for row in wrapped:
                 rows.append(_Row(left, row, h, quote=qd, code_bg=bg))
         return rows
+
+    def _copy_row(
+        self, index: int, width: float, measure, line_height, theme: Theme, qd: int
+    ) -> _Row:
+        """The row above code block ``index`` holding its Copy button: on the
+        block's own fill, so it reads as the block's header, with the button
+        right-aligned in the muted text color and the code face (whose fixed
+        advance keeps "Copy" and "Copied" the same width)."""
+        qind = qd * _QUOTE_INDENT
+        style = Style(fg=theme.muted_text, bg=theme.control_bg, font=self.code_font)
+        label_w = measure(_COPY_LABEL, style)
+        x0 = max(qind, width - _CODE_PAD - label_w)
+        return _Row(x0, [(_COPY_LABEL, style, f"{_COPY_HREF}{index}")],
+                    line_height(style), quote=qd, code_bg=theme.control_bg,
+                    copy_block=index, fill_x=qind)
 
     def _layout_table(
         self, tbl: _Table, width: float, measure, theme: Theme, qd: int,
@@ -1674,13 +1738,15 @@ class MarkdownView(Widget):
             if row.code_bg is not None:
                 # A continuous fill across the whole block width behind the code,
                 # so consecutive rows read as one panel (not a ragged per-glyph bg).
-                fx = row.x0 - _CODE_PAD
+                fx = row.fill_x if row.fill_x is not None else row.x0 - _CODE_PAD
                 ctx.fill_rect(fx, y, max(0.0, self._wrap_width - fx), row.height,
                               Style(bg=row.code_bg))
             x = row.x0
             for si, (text, style, href) in enumerate(row.spans):
                 if not text:
                     continue
+                if row.copy_block >= 0 and row.copy_block == self._copied_block:
+                    text = _COPIED_LABEL
                 w = ctx.measure_text(text, style)
                 if (index, -1, -1, si) in focus_parts:
                     style = self._focus_link_style(ctx, x, y, w, row.height, style, theme)
@@ -2230,6 +2296,8 @@ class MarkdownView(Widget):
             if not 0 <= r < len(rows):
                 continue
             row = rows[r]
+            if row.copy_block >= 0:
+                continue  # a Copy button is chrome, not document text
             lr = self._row_local_range(r, sel)
             if row.table is not None:
                 if row.table.hline:
@@ -2286,6 +2354,9 @@ class MarkdownView(Widget):
                     end += 1
                 out.append(self._table_html(r, end, sel))
                 r = end + 1
+                continue
+            if row.copy_block >= 0:
+                r += 1
                 continue
             lr = self._row_local_range(r, sel)
             frag = self._spans_html(row.spans, lr[0][2], lr[1][2], heading=bool(row.heading)) if lr else ""
@@ -2412,7 +2483,10 @@ class MarkdownView(Widget):
     @staticmethod
     def _row_plain(row: _Row) -> str:
         """A text row's concatenated plain text (empty for image / rule / table /
-        blank rows, which carry no spans, so those never match)."""
+        blank rows, which carry no spans, so those never match). A code block's
+        Copy button is chrome, not text, and reads as empty too."""
+        if row.copy_block >= 0:
+            return ""
         return "".join(t for t, _, _ in row.spans)
 
     def _recompute_search_rows(self) -> None:
@@ -2562,7 +2636,12 @@ class MarkdownView(Widget):
         whatever its scheme; when it declines (or there is none), a ``#slug``
         link scrolls to that heading in-document and anything else goes to the
         Panel (``os_open`` backends launch the OS handler, others copy the URL)
-        — no widget branch."""
+        — no widget branch. A code block's Copy button comes through here too
+        (a click or Enter on it) and is handled before ``on_link``: it is the
+        view's own control, not a link the document made."""
+        if url.startswith(_COPY_HREF):
+            self.copy_code_block(int(url[len(_COPY_HREF):]))
+            return
         if self.on_link is not None and self.on_link(url):
             return
         if url.startswith("#"):
@@ -2572,6 +2651,16 @@ class MarkdownView(Widget):
                 self._clamp(self._content_h())
         elif self._panel is not None:
             self._panel.open_url(url)
+
+    def copy_code_block(self, index: int) -> bool:
+        """Put fenced code block ``index`` (in document order) on the clipboard,
+        exactly as its source wrote it, and mark its button *Copied*. False when
+        there is no such block or no panel yet (before the first draw)."""
+        if not 0 <= index < len(self._code_texts) or self._panel is None:
+            return False
+        self._panel.set_clipboard(self._code_texts[index])
+        self._copied_block = index
+        return True
 
     # --- keyboard link focus --------------------------------------------------
 
@@ -2662,6 +2751,7 @@ class MarkdownView(Widget):
         focus and returns False, so the focus order moves on to the next widget
         — the same contract as :meth:`FocusContainer.focus_advance`, which is
         how the Panel's Tab traversal reaches links at all."""
+        self._copied_block = -1
         links = self._collect_links()
         if not links:
             return False

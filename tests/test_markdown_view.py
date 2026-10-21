@@ -1695,3 +1695,83 @@ def test_set_source_drops_the_link_focus():
     view.set_source("[other](u:9)")
     panel.render()
     assert view.focused_link is None
+
+
+# --- code-block copy button -----------------------------------------------------
+
+_CODE_DOC = "Intro [docs](u:1)\n\n```\nfirst line\n  second\n```\n\nafter\n\n~~~py\nx = 1\n~~~"
+
+
+def test_code_copy_is_off_by_default():
+    _b, _p, view = _shown(_CODE_DOC, height=20)
+    assert all(row.copy_block < 0 for row in view._rows)
+    assert view.focus_advance(1) and view.focused_link == "u:1"
+    assert not view.focus_advance(1)
+
+
+def test_code_copy_puts_a_button_above_each_block():
+    backend, _p, view = _shown(_CODE_DOC, height=20, code_copy=True)
+    buttons = [(i, row) for i, row in enumerate(view._rows) if row.copy_block >= 0]
+    assert [row.copy_block for _, row in buttons] == [0, 1]
+    for i, row in buttons:
+        # Right-aligned, on its own row, directly above the block's first line.
+        assert _row_text(backend, i).rstrip().endswith("Copy")
+        assert view._rows[i + 1].code_bg is not None and view._rows[i + 1].copy_block < 0
+
+
+def test_the_copy_buttons_are_tab_stops_and_enter_copies_the_block():
+    seen = []
+    _b, panel, view = _shown(_CODE_DOC, height=20, code_copy=True,
+                             on_link=lambda u: seen.append(u) or True)
+    assert view.focus_advance(1) and view.focused_link == "u:1"
+    assert view.focus_advance(1)
+    assert view.handle_event(_key("enter"))
+    assert panel.get_clipboard() == "first line\n  second"
+    assert view.focus_advance(1)
+    assert view.handle_event(_key("enter"))
+    assert panel.get_clipboard() == "x = 1"
+    assert seen == []                        # on_link never hears of a button
+
+
+@pytest.mark.parametrize("caps", [PROFILE_TUI, PROFILE_GUI_DESKTOP])
+def test_a_click_copies_and_the_button_reads_copied(caps):
+    backend, panel, view = _shown("```\nabc\n```", width=30, caps=caps, code_copy=True)
+    assert _row_text(backend, 0).rstrip().endswith("Copy")
+    x = _row_text(backend, 0).index("Copy")
+    panel.dispatch_event(Event(type=EventType.MOUSE_CLICK, x=x + 1, y=0))
+    assert panel.get_clipboard() == "abc"
+    panel.render()
+    assert _row_text(backend, 0).rstrip().endswith("Copied")
+    view.focus_advance(1)                    # moving on resets the label
+    panel.render()
+    assert _row_text(backend, 0).rstrip().endswith("Copy")
+
+
+def test_a_selection_leaves_the_button_out():
+    _b, _p, view = _shown("```\nabc\n```\n\ntail", height=10, code_copy=True,
+                          selectable=True)
+    view._select_all()
+    assert "Copy" not in view.selection_text()
+    assert view.selection_text().startswith("abc")
+    assert "Copy" not in view.selection_html()
+
+
+def test_search_does_not_match_the_button():
+    _b, _p, view = _shown("```\nabc\n```", height=10, code_copy=True)
+    assert view.search_set("Copy") == 0
+
+
+def _row_text(backend, y):
+    return "".join(backend.snapshot()[y])
+
+
+def test_a_longer_fence_holds_a_shorter_one():
+    sems = parse_markdown("````\n```\ninner\n```\n````\nafter")
+    assert sems[0].block == "code"
+    assert [t for t, _, _ in sems[0].runs] == ["```", "inner", "```"]
+    assert sems[-1].block == "para"
+
+
+def test_a_fence_closes_only_on_its_own_character_and_a_bare_line():
+    sems = parse_markdown("```\n~~~\n``` not a close\n```\n")
+    assert [t for t, _, _ in sems[0].runs] == ["~~~", "``` not a close"]

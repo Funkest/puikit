@@ -1,0 +1,28 @@
+# Keep this fork's main a mirror of crftwr/puikit main: fast-forward only, so it
+# always succeeds as long as nothing is committed to main here (own work lives on
+# funkest). Upstream tags (releases) are copied too. Runs daily and on demand.
+name: Sync main with upstream
+
+on:
+  schedule:
+    - cron: '23 3 * * *'   # daily, 03:23 UTC (12:23 JST)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fast-forward main to upstream main and copy its tags
+        run: |
+          git remote add upstream https://github.com/crftwr/puikit.git
+          git fetch upstream main --tags
+          git merge --ff-only upstream/main
+          git push origin main --tags

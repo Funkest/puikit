@@ -284,3 +284,47 @@ def test_utf16_units_accepts_a_lone_surrogate():
     character."""
     assert utf16_units("abc\ud842") == 4
     assert utf16_units("𠮟") == 2, "the halves still count as two"
+
+
+# --- set_wide_chars -------------------------------------------------------
+
+import pytest
+
+from puikit.text import is_widened, set_wide_chars
+
+
+@pytest.fixture
+def widened():
+    """Widen for one test, and always put the default back: the set is
+    process-wide, and every later test measures through it."""
+    yield set_wide_chars
+    set_wide_chars("")
+
+
+def test_widened_chars_count_two_columns(widened):
+    assert display_width("★c") == 2
+    widened("★○")
+    assert char_width("★") == 2
+    assert display_width("★c") == 3
+    assert display_width("○□") == 3  # □ was not named
+    assert truncate_to_width("★★★", 4) == "★★"
+
+
+def test_ascii_and_already_wide_chars_are_left_alone(widened):
+    assert widened("a中́★") == frozenset({"★"})
+    assert char_width("a") == 1
+    assert char_width("中") == 2
+
+
+def test_a_variation_selector_still_decides(widened):
+    widened("☆")
+    assert display_width("☆︎") == 1   # text presentation pins one column
+    assert not is_widened("☆︎")
+    assert is_widened("☆")
+
+
+def test_clearing_restores_unicode_widths(widened):
+    widened("★")
+    widened("")
+    assert char_width("★") == 1
+    assert not is_widened("★")

@@ -28,7 +28,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Iterator
 
-from ..text import display_width, glyph_runs, is_emoji_glyph
+from ..text import display_width, glyph_runs, is_emoji_glyph, is_widened
 
 # The second cell of a wide glyph. It is owned by the lead cell to its left and
 # is never drawn: the terminal advances two columns for the lead by itself.
@@ -401,6 +401,18 @@ class VTGrid:
                     if style != pen:
                         append(_sgr_delta(style, pen))
                         pen = style
+                    if is_widened(glyph):
+                        # Two columns here, one to a terminal (set_wide_chars):
+                        # the font draws the glyph across both while the
+                        # terminal moves on after one. Blank the second column
+                        # first, then draw the glyph, so the spill lands on a
+                        # space rather than on whatever stood there. In that
+                        # order it also holds on a terminal set to count
+                        # Ambiguous as wide: the glyph covers the blank itself.
+                        append(f"\x1b[{y + 1};{x + 2}H \x1b[{y + 1};{x + 1}H")
+                        append(glyph)
+                        reanchor = True
+                        continue
                     append(glyph)
                     # Emoji are the glyphs terminals disagree about. A base in
                     # the emoji planes is drawn two columns wide everywhere, but

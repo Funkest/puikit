@@ -132,7 +132,6 @@ def _context_width(ch: str, nxt: str) -> int:
 
 
 @lru_cache(maxsize=8192)
-
 def utf16_units(text: str) -> int:
     """How many UTF-16 code units ``text`` occupies.
 
@@ -150,6 +149,8 @@ def utf16_units(text: str) -> int:
     """
     return len(text.encode("utf-16-le", "surrogatepass")) // 2
 
+
+@lru_cache(maxsize=8192)
 def display_width(text: str) -> int:
     """Total display columns of ``text``, accounting for emoji/text variation
     selectors that change the preceding character's width.

@@ -332,12 +332,35 @@ The quickest check is to render any framed dialog and look at the corners: if th
 frame tears or the corners don't close, that terminal is rendering the lines at 2
 cells.
 
+### Widening a few symbols instead: `set_wide_chars`
+
+Some fonts (HackGen, for one) draw Ambiguous *symbols* such as `○ □ ★ ●` at
+full width while the terminal stays narrow and advances one cell, so the glyph
+spills over the next character. Switching the terminal to "ambiguous = wide"
+fixes the symbols but breaks every frame, for the reasons above.
+`puikit.text.set_wide_chars(chars)` widens just the named characters:
+
+- `char_width` / `display_width` count each of them as **2 cells**, so layout
+  leaves the second cell free. ASCII and anything already 0 or 2 cells are
+  ignored. The box-drawing glyphs are only affected if an application names
+  them, which it should not.
+- The VT engine writes that second cell **blank first, then the glyph** at its
+  lead, then re-states the cursor (the same re-anchor emoji get). The spill
+  lands on a space. In that order it also holds on a terminal set to wide: the
+  glyph covers the blank itself.
+- curses needs nothing: it pre-paints a run's width with spaces and places
+  each glyph at its own column.
+- The GUI backends give the glyph two cells.
+
+It is process-wide and meant to be set once, before the first frame: a widget
+keeps any measurement it made earlier until it lays out again.
+
 ---
 
 ## Reference
 
 - Backend: `puikit/backends/curses_backend.py` — `draw_box`, `draw_text`,
   `draw_scrollbar`, `shadow_rect`
-- Width logic: `puikit/text.py` — `char_width`, `display_width`, `glyph_runs`
+- Width logic: `puikit/text.py` — `char_width`, `display_width`, `glyph_runs`, `set_wide_chars`
 - Widgets: `puikit/widgets/progress_bar.py` — `ProgressBar` (heavy `━` over light `─`)
 - Unicode: Box Drawing `U+2500–U+257F`, Block Elements `U+2580–U+259F`

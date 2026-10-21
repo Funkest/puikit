@@ -384,3 +384,44 @@ def test_a_frame_starts_with_no_watchers():
     token = g.watch_rect(0, 0, 10, 2)
     g.clear()
     assert g.visible_rects(token) == []
+
+
+# --- characters widened by set_wide_chars -----------------------------------
+
+from puikit.text import set_wide_chars  # noqa: E402
+
+
+@pytest.fixture
+def widened():
+    yield set_wide_chars
+    set_wide_chars("")
+
+
+def test_a_widened_glyph_owns_two_columns(widened):
+    widened("★")
+    g = VTGrid(10, 1)
+    g.draw_text(0, 0, "★c")
+    assert g.cell_at(0, 0)[0] == "★"
+    assert g.cell_at(1, 0) is _TRAIL
+    assert g.cell_at(2, 0)[0] == "c"
+
+
+def test_a_widened_glyph_blanks_its_second_column_then_draws(widened):
+    # The terminal (Ambiguous = narrow) advances one column for it, so the
+    # second column is written blank first, the glyph drawn at its lead, and
+    # the cursor put back where the next glyph belongs.
+    widened("★")
+    g = VTGrid(10, 1)
+    g.draw_text(0, 0, "a★c")
+    vt = g.render()
+    blank = vt.index("\x1b[1;3H ")
+    star = vt.index("\x1b[1;2H★")
+    assert blank < star
+    assert (1, 4) in cup_positions(vt)[2:]
+    assert visible(vt).rstrip() == "a ★c"
+
+
+def test_without_widening_the_glyph_is_ordinary_text():
+    g = VTGrid(10, 1)
+    g.draw_text(0, 0, "a★c")
+    assert cup_positions(g.render()) == [(1, 1)]

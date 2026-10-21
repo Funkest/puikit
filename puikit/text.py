@@ -29,18 +29,67 @@ def _is_variation_selector(ch: str) -> bool:
     return "︀" <= ch <= "️"
 
 
+#: Characters an application has asked to count as two columns although
+#: Unicode gives them one — see :func:`set_wide_chars`.
+_widened: frozenset = frozenset()
+
+
+def set_wide_chars(chars) -> frozenset:
+    """Count each of ``chars`` as two columns wherever width is measured.
+
+    For the East Asian *Ambiguous* symbols (``○ □ ★ ●``) that a font draws
+    full-width while the terminal advances one column for them: the glyph
+    then spills over the next character. Counted as two, the layout leaves the
+    second column free, and the VT backend writes it blank, so the glyph has
+    room without the terminal being told anything. Terminal side, the
+    ambiguous width stays *narrow*; the GUI backends simply give the glyph two
+    cells.
+
+    ``chars`` is any iterable of characters (a string works). ASCII, and
+    anything already zero or two columns wide, is left as it is. Returns
+    the set now in force. Call it before drawing: a widget that measured text
+    earlier keeps what it measured until it lays out again."""
+    global _widened
+    widened = frozenset(ch for ch in chars
+                        if isinstance(ch, str) and len(ch) == 1
+                        and ord(ch) >= 128 and _natural_width(ch) == 1)
+    if widened != _widened:
+        _widened = widened
+        for measured in (char_width, display_width):
+            clear = getattr(measured, "cache_clear", None)
+            if clear is not None:
+                clear()
+    return widened
+
+
+def is_widened(glyph: str) -> bool:
+    """True for a glyph run whose base :func:`set_wide_chars` made two columns
+    wide: the one case where the terminal advances fewer columns than
+    :func:`display_width` counts. A variation selector decides the width on
+    its own (:func:`_context_width`), so a run carrying one is not widened."""
+    return (bool(_widened) and bool(glyph) and glyph[0] in _widened
+            and _VS_TEXT not in glyph and _VS_EMOJI not in glyph)
+
+
+def _natural_width(ch: str) -> int:
+    if ch == _ZWJ or _is_variation_selector(ch) or unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+
+
 @lru_cache(maxsize=4096)
 def char_width(ch: str) -> int:
     """Display columns for a single character in isolation: 0 for a combining
-    mark, variation selector, or ZWJ; 2 for East Asian Wide/Fullwidth; else 1.
+    mark, variation selector, or ZWJ; 2 for East Asian Wide/Fullwidth and for
+    the characters :func:`set_wide_chars` widened; else 1.
 
     A variation selector's effect on the *preceding* character is applied by
     the sequence-aware helpers below, not here."""
     if ch and ord(ch[0]) < 128:
         return 1  # fast path: ASCII is always one column
-    if ch == _ZWJ or _is_variation_selector(ch) or unicodedata.combining(ch):
-        return 0
-    return 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+    if ch in _widened:
+        return 2
+    return _natural_width(ch)
 
 
 def is_emoji_glyph(glyph: str) -> bool:

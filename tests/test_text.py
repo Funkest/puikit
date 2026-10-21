@@ -64,6 +64,17 @@ def test_display_width_mixed():
     assert display_width("abあいうえおcde") == 15
 
 
+def test_display_width_is_memoized():
+    # A TUI frame re-measures every visible string; the cache is what keeps that
+    # cheap (c08c78b). It was once displaced onto the function above it by an
+    # insertion between the decorator and its def, and nothing noticed.
+    from puikit.text import display_width as dw
+    dw.cache_clear()
+    dw("memo")
+    dw("memo")
+    assert dw.cache_info().hits == 1
+
+
 def test_truncate_to_width_drops_straddling_wide_char():
     # 6 columns fits "ab" (2) + "あい" (4); the next wide char would straddle.
     assert truncate_to_width("abあいうえお", 6) == "abあい"
@@ -284,14 +295,3 @@ def test_utf16_units_accepts_a_lone_surrogate():
     character."""
     assert utf16_units("abc\ud842") == 4
     assert utf16_units("𠮟") == 2, "the halves still count as two"
-
-
-def test_display_width_is_memoized():
-    # A TUI frame re-measures every visible string; the cache is what keeps that
-    # cheap (c08c78b). It was once displaced onto the function above it by an
-    # insertion between the decorator and its def, and nothing noticed.
-    from puikit.text import display_width as dw
-    dw.cache_clear()
-    dw("memo")
-    dw("memo")
-    assert dw.cache_info().hits == 1

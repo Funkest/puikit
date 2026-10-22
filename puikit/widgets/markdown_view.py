@@ -2732,6 +2732,26 @@ class MarkdownView(Widget):
         return replace(style, bg=bg)
 
     @property
+    def focus_stop_kinds(self) -> frozenset[str]:
+        """Which kinds of keyboard stops the document has: ``"link"`` for any
+        link, ``"copy"`` for a code block's Copy button (``code_copy``). Read
+        from the parsed document, so a host can know before the first draw —
+        a dialog uses it to say what Tab reaches in its key hint."""
+        kinds = set()
+        if self.code_copy and self._code_texts:
+            kinds.add("copy")
+        for sem in self._sems:
+            runs = list(sem.runs)
+            if sem.table is not None:
+                for cell in [*sem.table.header, *(c for row in sem.table.rows for c in row)]:
+                    if not isinstance(cell, _CellImage):
+                        runs.extend(cell)
+            if any(href for _t, _r, href in runs):
+                kinds.add("link")
+                break
+        return frozenset(kinds)
+
+    @property
     def focused_link(self) -> str | None:
         """The href of the keyboard-focused link, or None."""
         links = self._collect_links()

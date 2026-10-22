@@ -1775,3 +1775,13 @@ def test_a_longer_fence_holds_a_shorter_one():
 def test_a_fence_closes_only_on_its_own_character_and_a_bare_line():
     sems = parse_markdown("```\n~~~\n``` not a close\n```\n")
     assert [t for t, _, _ in sems[0].runs] == ["~~~", "``` not a close"]
+
+
+def test_focus_stop_kinds_names_links_and_copy_buttons():
+    assert MarkdownView("plain").focus_stop_kinds == frozenset()
+    assert MarkdownView("see [docs](u:1)").focus_stop_kinds == {"link"}
+    assert MarkdownView("| a |\n| - |\n| [x](u:1) |").focus_stop_kinds == {"link"}
+    assert MarkdownView("```\nx\n```").focus_stop_kinds == frozenset()   # no button
+    assert MarkdownView("```\nx\n```", code_copy=True).focus_stop_kinds == {"copy"}
+    both = MarkdownView("[a](u:1)\n\n```\nx\n```", code_copy=True)
+    assert both.focus_stop_kinds == {"link", "copy"}

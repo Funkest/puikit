@@ -1356,6 +1356,25 @@ def test_secondary_input_goes_to_the_window_not_the_app_handler():
         backend.close()
 
 
+def test_main_window_close_goes_to_the_quit_handler():
+    """With a quit handler (Backend.set_quit_handler), the main window's close
+    button and Alt-F4 ask the app instead of destroying the window; the app
+    quits by calling quit() once it decides to."""
+    backend = WindowsBackend(width=40, height=12, title="puikit-quit-request")
+    backend.open()
+    try:
+        asked = []
+        backend.set_quit_handler(lambda: asked.append(1))
+        assert backend._handle_message(backend._hwnd, native.WM_CLOSE, 0, 0) == 0
+        assert asked == [1]
+        assert native.user32.IsWindowVisible(backend._hwnd)   # not destroyed
+        assert not backend._quit_requested
+        backend.quit()
+        assert backend._quit_requested
+    finally:
+        backend.close()
+
+
 def test_user_close_fires_on_close_and_does_not_quit_the_app():
     backend = WindowsBackend(width=40, height=12, title="puikit-mw-close")
     backend.open()

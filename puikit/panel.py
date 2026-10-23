@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -2682,6 +2683,20 @@ class Panel:
         if on_complete is not None:
             on_complete("copy")
         return False
+
+    # --- quitting ---------------------------------------------------------------
+
+    def set_quit_handler(self, handler: Callable[[], None] | None,
+                         shortcut: str | None = None) -> None:
+        """Ask ``handler`` when the platform asks the app to quit — the macOS
+        application menu's Quit or the Dock's, the main window's close button
+        — instead of quitting at once; the app calls ``backend.quit()`` itself
+        once it decides to. ``shortcut`` is what the macOS Quit item shows
+        (display-only, as every menu shortcut is: the key reaches the app's
+        keymap). On a backend with no such requests it is only recorded, so
+        the app never branches on the platform. See
+        :meth:`Backend.set_quit_handler`."""
+        self.backend.set_quit_handler(handler, shortcut)
 
     # --- menus ----------------------------------------------------------------
 

@@ -1052,6 +1052,40 @@ class Backend(ABC):
     def quit(self) -> None:
         """Request the event loop to stop after the current iteration."""
 
+    # --- quit requests ------------------------------------------------------
+
+    def set_quit_handler(self, handler: Callable[[], None] | None,
+                         shortcut: str | None = None) -> None:
+        """Hand the platform's requests to quit to ``handler`` instead of
+        quitting at once: the macOS application menu's Quit and the Dock's,
+        and the main window's close button (Alt-F4 on Windows). The app
+        decides, and calls :meth:`quit` when it does quit — after asking, or
+        saving its state. ``None`` restores the default, where those requests
+        quit immediately.
+
+        ``shortcut`` is the hint the macOS application menu's Quit item shows,
+        in ``MenuItem.shortcut`` form (``"Cmd-Q"``, ``"Q"``). Like every
+        puikit shortcut it is display-only: the keystroke reaches the app's
+        own key handling, so the app's keymap decides what it does. With a
+        handler and no shortcut, the item shows none.
+
+        A backend whose platform sends no such requests (a terminal) only
+        records the handler. A main window closed with
+        ``main_window_close="hide"`` still hides; that is not a request to
+        quit."""
+        self._quit_handler = handler
+        self._quit_shortcut = shortcut
+
+    def _quit_request(self) -> bool:
+        """Pass a platform quit request to the app's handler. True when a
+        handler took it, so the caller must not quit; False when there is none
+        and the caller quits as it always has."""
+        handler = getattr(self, "_quit_handler", None)
+        if handler is None:
+            return False
+        handler()
+        return True
+
     # --- multi-window (capability "multi_window") -----------------------------
 
     def set_tray(self, title: str | None = None, menu: Any = None,

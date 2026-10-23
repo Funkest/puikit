@@ -149,8 +149,9 @@ class _NonFiringMenu(NSMenu):
     menu fired the equivalent, macOS would swallow that plain keystroke before it
     reached the view — including while a text field is focused — breaking typing
     in dialogs. Declining here keeps the native look without the hijack. Genuine
-    accelerators that *should* fire (e.g. the ⌘Q in the application menu) live in
-    a standard ``NSMenu`` and are unaffected.
+    accelerators that *should* fire (the ⌘Q in the application menu, unless the
+    app takes its own quit requests) live in a standard ``NSMenu`` and are
+    unaffected.
 
     Declining is necessary but not sufficient: an active app's menu-bar
     dispatch can match a Cmd-chord against its own cached equivalent table and
@@ -245,13 +246,21 @@ def _build_menu(menu: Menu, responder: _MenuResponder) -> Any:
 
 def build_menu_bar(
     menu: Menu, app_title: str, forward_key: Any | None = None,
-    is_active: Any | None = None,
+    is_active: Any | None = None, quit: tuple | None = None,
 ) -> tuple[Any, _MenuResponder]:
     """Build the NSMenu main menu: a standard application menu (with Quit)
     followed by one bar entry per top-level item in ``menu``. ``forward_key``
     receives the NSEvent of a key-equivalent activation instead of the item
     firing (see ``_MenuResponder.fire_``); ``is_active`` is the Panel's
-    modality gate (see ``Backend.set_menu_bar``)."""
+    modality gate (see ``Backend.set_menu_bar``).
+
+    ``quit`` is ``(handler, shortcut)`` when the app takes its own quit
+    requests (``Backend.set_quit_handler``). The Quit item is then an ordinary
+    puikit item: choosing it calls ``handler``, and its shortcut is
+    display-only, so the keystroke goes to the app's keymap rather than
+    terminating. It is never greyed by the modality gate — quitting stays
+    reachable while a dialog is up; the app's handler decides what that
+    means. Without ``quit`` it is the standard ⌘Q ``terminate:`` item."""
     responder = _MenuResponder.alloc().init()
     responder._forward_key = forward_key
     responder._is_active = is_active
@@ -260,12 +269,22 @@ def build_menu_bar(
     # The application menu (its title is ignored; macOS shows the app name).
     app_item = NSMenuItem.alloc().init()
     main.addItem_(app_item)
-    app_menu = NSMenu.alloc().init()
-    quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-        f"Quit {app_title}", "terminate:", "q"
-    )
-    quit_item.setKeyEquivalentModifierMask_(NSEventModifierFlagCommand)
-    app_menu.addItem_(quit_item)
+    if quit is not None:
+        handler, shortcut = quit
+        # A responder of its own with no modality gate, kept alive on the bar's.
+        quit_responder = _MenuResponder.alloc().init()
+        quit_responder._forward_key = forward_key
+        responder._quit_responder = quit_responder
+        app_menu = _build_menu(
+            Menu(MenuItem(f"Quit {app_title}", on_select=handler, shortcut=shortcut)),
+            quit_responder)
+    else:
+        app_menu = NSMenu.alloc().init()
+        quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            f"Quit {app_title}", "terminate:", "q"
+        )
+        quit_item.setKeyEquivalentModifierMask_(NSEventModifierFlagCommand)
+        app_menu.addItem_(quit_item)
     app_item.setSubmenu_(app_menu)
 
     # One bar entry per top-level item; each carries its own submenu.
@@ -289,14 +308,14 @@ def build_popup_menu(menu: Menu) -> tuple[Any, _MenuResponder]:
 
 def install_menu_bar(
     menu: Menu | None, app_title: str, forward_key: Any | None = None,
-    is_active: Any | None = None,
+    is_active: Any | None = None, quit: tuple | None = None,
 ) -> _MenuResponder | None:
     """Set (or clear) the application main menu. Returns the responder, which
-    the caller must retain so the item callbacks survive. ``forward_key`` and
-    ``is_active`` are passed through to ``build_menu_bar``."""
+    the caller must retain so the item callbacks survive. ``forward_key``,
+    ``is_active`` and ``quit`` are passed through to ``build_menu_bar``."""
     if menu is None:
         NSApp.setMainMenu_(NSMenu.alloc().init())
         return None
-    main, responder = build_menu_bar(menu, app_title, forward_key, is_active)
+    main, responder = build_menu_bar(menu, app_title, forward_key, is_active, quit)
     NSApp.setMainMenu_(main)
     return responder

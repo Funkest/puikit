@@ -82,6 +82,8 @@ from AppKit import (
     NSRectFill,
     NSRectFillUsingOperation,
     NSShadow,
+    NSTerminateCancel,
+    NSTerminateNow,
     NSTextInputContext,
     NSTrackingActiveAlways,
     NSTrackingActiveInKeyWindow,
@@ -1474,6 +1476,10 @@ class _PuiKitWindowDelegate(NSObject):
         if backend is not None and getattr(backend, "_main_window_close", "quit") == "hide":
             sender.orderOut_(None)
             return False
+        # The close button of the main window is a request to quit: the app's
+        # quit handler, when it has one, decides (Backend.set_quit_handler).
+        if backend is not None and backend._quit_request():
+            return False
         return True
 
     def windowWillClose_(self, notification):
@@ -1491,6 +1497,21 @@ class _PuiKitWindowDelegate(NSObject):
     def windowDidEndLiveResize_(self, notification):
         if self.backend is not None:
             self.backend._on_live_resize(False)
+
+
+class _PuiKitAppDelegate(NSObject):
+    """NSApp's delegate, installed while the app takes its own quit requests:
+    ``terminate:`` — the Dock's Quit, logout, a ⌘Q bound by something other
+    than our menu — goes to the app's quit handler instead of ending the
+    process, and the app calls quit() when it is done."""
+
+    backend = None
+
+    def applicationShouldTerminate_(self, sender):
+        backend = self.backend
+        if backend is not None and backend._quit_request():
+            return NSTerminateCancel
+        return NSTerminateNow
 
 
 class _PuiKitSecondaryWindowDelegate(NSObject):
@@ -2044,6 +2065,12 @@ class MacOSBackend(Backend):
         # Retained NSMenu target for the installed app menu bar, so item
         # callbacks survive (an NSMenuItem does not retain its target).
         self._menu_responder: Any = None
+        # The last set_menu_bar call, so set_quit_handler can rebuild the bar
+        # with the application menu's Quit item changed.
+        self._menu_bar_args: tuple | None = None
+        # NSApp's delegate while a quit handler is set (retained: NSApp holds
+        # its delegate weakly).
+        self._app_delegate: Any = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -4718,10 +4745,29 @@ class MacOSBackend(Backend):
     def set_menu_bar(self, menu: Any, is_active: Any | None = None) -> None:
         from ._macos_menu import install_menu_bar
 
+        self._menu_bar_args = (menu, is_active)
+        handler = getattr(self, "_quit_handler", None)
         self._menu_responder = install_menu_bar(
             menu, self._title, forward_key=self._forward_menu_key,
             is_active=is_active,
+            quit=(handler, getattr(self, "_quit_shortcut", None)) if handler else None,
         )
+
+    def set_quit_handler(self, handler, shortcut: str | None = None) -> None:
+        super().set_quit_handler(handler, shortcut)
+        # terminate: (the Dock's Quit, logout) reaches the handler through
+        # NSApp's delegate; the close button through the window's.
+        app = NSApplication.sharedApplication()
+        if handler is not None:
+            if self._app_delegate is None:
+                self._app_delegate = _PuiKitAppDelegate.alloc().init()
+                self._app_delegate.backend = self
+            app.setDelegate_(self._app_delegate)
+        elif self._app_delegate is not None and app.delegate() is self._app_delegate:
+            app.setDelegate_(None)
+        # The application menu's Quit item changes with it.
+        if self._menu_bar_args is not None and self._menu_bar_args[0] is not None:
+            self.set_menu_bar(*self._menu_bar_args)
 
     def _forward_menu_key(self, ns_event) -> None:
         """Deliver a menu-bar key-equivalent chord to the ordinary key path.

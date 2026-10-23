@@ -235,6 +235,33 @@ One-shot timer on the UI thread; returns a zero-argument cancel function
   arms in `open()`; before it, headless construction stays unrestricted.)
 
 
+## Quit requests: `Panel.set_quit_handler(handler, shortcut=None)`
+
+The platform asks an app to quit in places the app never sees as a key: the
+macOS application menu's **Quit** (⌘Q) and the Dock's, logout, and the main
+window's close button (Alt-F4 on Windows). By default those end the process
+at once. An app that has to ask first, or save state on the way out, sets a
+handler, and the request goes to it instead. The app calls `backend.quit()`
+when it decides to.
+
+- **macOS.**
+  - The application menu's Quit item becomes an ordinary puikit item.
+    Choosing it calls the handler, and its key equivalent is `shortcut`,
+    display-only like every `MenuItem.shortcut`: the keystroke reaches the
+    app's key handling, so the app's keymap decides what ⌘Q does. The item
+    is never greyed by the modality gate.
+  - `terminate:` (the Dock, logout) is caught by an NSApp delegate
+    (`applicationShouldTerminate:` returns `NSTerminateCancel`).
+  - The close button goes through `windowShouldClose:`.
+  - Cancelling `terminate:` at logout makes macOS report that the app
+    interrupted it until the app quits.
+- **Windows.** The main window's `WM_CLOSE` calls the handler instead of
+  destroying the window.
+- **Everywhere else** (terminals, the web backend, `MemoryBackend`), the
+  handler is only recorded, so the app sets it unconditionally.
+- `main_window_close="hide"` is unchanged: a hidden window is not a request
+  to quit. `None` restores the default.
+
 ## Screen marks (capability `screen_markers`)
 
 ```python

@@ -4291,6 +4291,11 @@ class WindowsBackend(Backend):
                 self._save_autosave_frame()
                 native.user32.ShowWindow(hwnd, native.SW_HIDE)
                 return 0
+            # The close button and Alt-F4 are requests to quit: the app's quit
+            # handler, when it has one, decides and calls quit() itself
+            # (Backend.set_quit_handler).
+            if self._quit_request():
+                return 0
             # DestroyWindow tears the window down synchronously (WM_DESTROY
             # fires before it returns), so the frame must be captured now —
             # by the time close() runs, GetWindowRect on this hwnd fails.

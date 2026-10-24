@@ -46,6 +46,60 @@ ASPECT_FITS = frozenset({WIDTH, HEIGHT})
 #: All recognized fit modes.
 FITS = frozenset({FILL, CONTAIN, COVER, WIDTH, HEIGHT})
 
+#: The EXIF / TIFF orientation tag (274), and the four of its eight values that
+#: turn the picture a quarter turn — the transposed ones, whose upright width is
+#: the stored height.
+ORIENTATION_TAG = 0x0112
+QUARTER_TURN_ORIENTATIONS = frozenset({5, 6, 7, 8})
+
+
+def upright_size(width: int, height: int, orientation: Any) -> tuple[int, int]:
+    """``(width, height)`` of a picture stored ``width x height`` once its
+    orientation is applied — swapped for the quarter turns, unchanged
+    otherwise (and for a missing or out-of-range tag)."""
+    if orientation in QUARTER_TURN_ORIENTATIONS:
+        return (height, width)
+    return (width, height)
+
+
+def exif_upright(image):
+    """A ``PIL.Image`` turned upright by its EXIF orientation, or the same image
+    when it has none to apply.
+
+    ``ImageOps.exif_transpose`` copies the picture even when the tag says it is
+    already upright, so the tag is read first and the copy only paid for a
+    picture that actually turns. Pillow is the caller's: an image to turn means
+    it is already imported."""
+    try:
+        orientation = image.getexif().get(ORIENTATION_TAG, 1)
+    except Exception:
+        return image
+    if orientation not in range(2, 9):
+        return image
+    from PIL import ImageOps
+
+    return ImageOps.exif_transpose(image)
+
+
+def exif_upright_size(image) -> tuple[int, int]:
+    """The ``(width, height)`` a ``PIL.Image`` has once :func:`exif_upright`
+    has turned it — for a caller that wants the dimensions of a picture it will
+    not draw.
+
+    Not ``upright_size(*image.size, tag)``: Pillow's plugins disagree about
+    which size an unloaded image reports. The TIFF plugin already reports the
+    turned one (and turns the pixels on ``load``), the JPEG plugin the stored
+    one. So a picture whose tag turns it is decoded and measured; one without
+    costs nothing beyond the header Pillow has already read."""
+    try:
+        orientation = image.getexif().get(ORIENTATION_TAG, 1)
+    except Exception:
+        return image.size
+    if orientation not in range(2, 9):
+        return image.size
+    return exif_upright(image).size
+
+
 #: Bytes per pixel of a :class:`RasterImage` buffer — RGBA8, four channels of
 #: eight bits. Named so a caller sizing a buffer does not have to spell ``4``.
 RGBA_BPP = 4
@@ -156,13 +210,21 @@ class RasterImage:
     # --- construction -------------------------------------------------------
 
     @classmethod
-    def from_pillow(cls, image) -> "RasterImage":
+    def from_pillow(cls, image, *, upright: bool = True) -> "RasterImage":
         """A raster from a ``PIL.Image``, converting to ``RGBA`` where it is not
         already. The common way to build one, since a decoder for a format no
         backend reads is nearly always a Pillow plugin.
 
+        The picture is turned upright by its EXIF orientation first, which is
+        how every backend draws the same file given as a path; a raster is drawn
+        exactly as given, so this is the one place the tag can still be read.
+        An image the caller generated carries no tag and is untouched.
+        ``upright=False`` keeps the stored pixel order.
+
         Pillow is imported by the caller, never by PuiKit: whatever produced the
         image already has it."""
+        if upright:
+            image = exif_upright(image)
         if image.mode != "RGBA":
             image = image.convert("RGBA")
         return cls(image.width, image.height, image.tobytes())
@@ -238,6 +300,10 @@ def image_size(path: str) -> tuple[int, int] | None:
     """Natural ``(width, height)`` of the image in pixels from its file header,
     or ``None`` if the format is unknown or the file is unreadable.
 
+    The size is the **upright** one: a JPEG whose EXIF orientation turns it a
+    quarter turn reports its width and height swapped, because that is how every
+    backend draws it (see ``upright_size``).
+
     A dependency-free header parse (PNG / GIF / BMP / JPEG), so the aspect
     ratio is available on every backend — TUI included, where it shapes the
     placeholder footprint and the layout the same way it does on GUI.
@@ -266,6 +332,9 @@ def image_size(path: str) -> tuple[int, int] | None:
 
 
 def _jpeg_size(path: str) -> tuple[int, int] | None:
+    """The frame size from the start-of-frame marker, turned upright by the EXIF
+    orientation in an APP1 segment met on the way (which always precedes it)."""
+    orientation = 1
     try:
         with open(path, "rb") as f:
             f.read(2)  # SOI
@@ -277,11 +346,38 @@ def _jpeg_size(path: str) -> tuple[int, int] | None:
                 if 0xC0 <= marker[1] <= 0xCF and marker[1] not in (0xC4, 0xC8, 0xCC):
                     f.read(3)  # segment length (2) + sample precision (1)
                     h, w = struct.unpack(">HH", f.read(4))
-                    return (w, h)
+                    return upright_size(w, h, orientation)
                 (seg_len,) = struct.unpack(">H", f.read(2))
-                f.seek(seg_len - 2, 1)
+                if marker[1] == 0xE1:  # APP1: Exif, or XMP (which has no tag)
+                    orientation = _exif_orientation(f.read(seg_len - 2), orientation)
+                else:
+                    f.seek(seg_len - 2, 1)
     except (OSError, struct.error):
         return None
+
+
+def _exif_orientation(segment: bytes, default: int) -> int:
+    """The orientation tag from an APP1 segment's body, or ``default`` when the
+    segment is not Exif or IFD0 does not carry one. Only IFD0 is read: that is
+    where the tag lives, and the rest of the block is of no interest here."""
+    if segment[:6] != b"Exif\x00\x00":
+        return default
+    tiff = segment[6:]
+    order = {b"II": "<", b"MM": ">"}.get(tiff[:2])
+    if order is None or len(tiff) < 8:
+        return default
+    try:
+        (ifd,) = struct.unpack(order + "I", tiff[4:8])
+        (count,) = struct.unpack(order + "H", tiff[ifd:ifd + 2])
+        for i in range(count):
+            entry = ifd + 2 + i * 12
+            tag, kind = struct.unpack(order + "HH", tiff[entry:entry + 4])
+            if tag == ORIENTATION_TAG and kind == 3:  # SHORT, held inline
+                (value,) = struct.unpack(order + "H", tiff[entry + 8:entry + 10])
+                return value
+    except struct.error:
+        pass
+    return default
 
 
 def aspect_extent(

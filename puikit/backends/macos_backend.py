@@ -140,7 +140,7 @@ except ImportError:  # pragma: no cover - older/partial PyObjC
     CATransaction = None
 from ..backend import Backend, DEFAULT_STYLE, EventHandler, ScreenMarker, Style, TextAttribute, WindowHandle, WindowStyle, _run_tick_callbacks, is_transparent
 from ..capability import PROFILE_GUI_DESKTOP, CapabilityProfile
-from ..image import is_raster, source_key
+from ..image import is_raster, source_key, upright_size
 from ._image_cache import MISS, ImageCache
 from ..easing import resolve as _resolve_easing
 from ..event import Event, EventType, char_key_event, is_typed_char
@@ -749,9 +749,15 @@ def _fill_rect(rect, color) -> None:
 _NS_ALPHA_NON_PREMULTIPLIED = 2
 
 def _imageio_pixel_size(path: Any) -> tuple[int, int] | None:
-    """``(width, height)`` in stored pixels, from ImageIO's metadata alone — no
-    frame is decoded. ``None`` when the file cannot be read or is not an image
-    ImageIO knows."""
+    """``(width, height)`` in pixels as the picture is *shown*, from ImageIO's
+    metadata alone — no frame is decoded. ``None`` when the file cannot be read
+    or is not an image ImageIO knows.
+
+    ``PixelWidth`` / ``PixelHeight`` are the stored dimensions, but ``NSImage``
+    draws the file upright, applying its EXIF orientation. A phone photo held
+    upright is stored landscape with orientation 6, so the stored size handed a
+    portrait picture a landscape box and stretched it; the size is swapped for
+    the quarter-turn orientations so it agrees with what is drawn."""
     if CGImageSourceCreateWithURL is None:
         return None
     try:
@@ -766,7 +772,7 @@ def _imageio_pixel_size(path: Any) -> tuple[int, int] | None:
         height = properties.get("PixelHeight")
         if not width or not height:
             return None
-        return (int(width), int(height))
+        return upright_size(int(width), int(height), properties.get("Orientation"))
     except Exception:
         return None
 

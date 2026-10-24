@@ -33,6 +33,7 @@ import threading
 from ctypes import wintypes
 from typing import Any
 
+from ..image import upright_size
 from ..text import utf16_units
 
 import numpy as np
@@ -947,6 +948,11 @@ ole32.CoCreateInstance.argtypes = [
 _IDX_WIC_FACTORY_CREATE_DECODER_FROM_FILENAME = 3
 _IDX_WIC_FACTORY_CREATE_FORMAT_CONVERTER = 10
 _IDX_WIC_FACTORY_CREATE_COMPONENT_ENUMERATOR = 23
+# The two below come from the same declaration order but are NOT yet verified
+# live: they serve only the EXIF-orientation path (_wic_upright), which a file
+# without an orientation tag never enters.
+_IDX_WIC_FACTORY_CREATE_BITMAP_FLIP_ROTATOR = 13
+_IDX_WIC_FACTORY_CREATE_BITMAP_FROM_SOURCE = 18
 
 # IEnumUnknown (vtable: IUnknown[0-2], Next[3], Skip[4], Reset[5], Clone[6]).
 _IDX_ENUM_UNKNOWN_NEXT = 3
@@ -977,6 +983,72 @@ _IDX_WIC_DECODER_GET_FRAME = 13
 _IDX_WIC_BITMAP_SOURCE_GET_SIZE = 3
 _IDX_WIC_BITMAP_SOURCE_COPY_PIXELS = 7
 _IDX_WIC_FORMAT_CONVERTER_INITIALIZE = 8
+
+# IWICBitmapFrameDecode : IWICBitmapSource adds GetMetadataQueryReader[8],
+#     GetColorContexts[9], GetThumbnail[10]; IWICMetadataQueryReader (vtable:
+#     IUnknown[0-2], GetContainerFormat[3], GetLocation[4],
+#     GetMetadataByName[5], GetEnumerator[6]); IWICBitmapFlipRotator :
+#     IWICBitmapSource adds Initialize[8]. From wincodec.h — NOT yet verified
+#     live, like the two factory indices above.
+_IDX_WIC_FRAME_GET_METADATA_QUERY_READER = 8
+_IDX_WIC_QUERY_READER_GET_METADATA_BY_NAME = 5
+_IDX_WIC_FLIP_ROTATOR_INITIALIZE = 8
+
+#: WICBitmapCreateCacheOption.WICBitmapCacheOnLoad: decode the whole picture
+#: into memory once. A flip-rotator turning a quarter pulls its source column
+#: by column, which a JPEG frame answers by decoding again and again.
+WIC_BITMAP_CACHE_ON_LOAD = 2
+
+#: WICBitmapTransformOptions. The rotations are clockwise.
+WIC_TRANSFORM_ROTATE_90 = 0x1
+WIC_TRANSFORM_ROTATE_180 = 0x2
+WIC_TRANSFORM_ROTATE_270 = 0x3
+WIC_TRANSFORM_FLIP_HORIZONTAL = 0x8
+WIC_TRANSFORM_FLIP_VERTICAL = 0x10
+
+#: The flip-rotator passes that turn a picture with EXIF orientation N upright
+#: (the same turns as Pillow's ``ImageOps.exif_transpose``). The transposed
+#: two are a rotation *then* a mirror, as two passes: WIC does not document the
+#: order it applies a combined rotate-and-flip option in, and the two orders
+#: give mirror-image answers.
+_WIC_UPRIGHT_PASSES = {
+    2: (WIC_TRANSFORM_FLIP_HORIZONTAL,),
+    3: (WIC_TRANSFORM_ROTATE_180,),
+    4: (WIC_TRANSFORM_FLIP_VERTICAL,),
+    5: (WIC_TRANSFORM_ROTATE_90, WIC_TRANSFORM_FLIP_HORIZONTAL),
+    6: (WIC_TRANSFORM_ROTATE_90,),
+    7: (WIC_TRANSFORM_ROTATE_270, WIC_TRANSFORM_FLIP_HORIZONTAL),
+    8: (WIC_TRANSFORM_ROTATE_270,),
+}
+
+#: Where the orientation tag is asked for: the photo-metadata policy first,
+#: which WIC maps onto every container it knows (HEIF included), then the raw
+#: JPEG and TIFF paths for a codec that does not implement the policy.
+_WIC_ORIENTATION_QUERIES = (
+    "System.Photo.Orientation",
+    "/app1/ifd/{ushort=274}",
+    "/ifd/{ushort=274}",
+)
+
+VT_UI2 = 18
+
+
+class PROPVARIANT(ctypes.Structure):
+    """Only as much of PROPVARIANT as an unsigned-short answer needs: the type
+    tag, and the union read as raw bytes (sized for the 64-bit layout, the
+    larger of the two)."""
+
+    _fields_ = [
+        ("vt", ctypes.c_ushort),
+        ("reserved1", ctypes.c_ushort),
+        ("reserved2", ctypes.c_ushort),
+        ("reserved3", ctypes.c_ushort),
+        ("value", ctypes.c_ubyte * 16),
+    ]
+
+
+ole32.PropVariantClear.restype = ctypes.c_int32
+ole32.PropVariantClear.argtypes = [ctypes.POINTER(PROPVARIANT)]
 
 # ID2D1RenderTarget.CreateBitmap[4] (raw pixel data), DrawBitmap[26] — same
 # vtable already used throughout this module (CreateSolidColorBrush[8],
@@ -1023,7 +1095,10 @@ def wic_load_bitmap_source(factory: ComPtr, path: str) -> ComPtr | None:
     happens) — wrapping the decoded frame for ``path``, or None if the file
     can't be decoded (missing, corrupt, unsupported format). Mirrors
     MacOSBackend's NSImage init returning nil, so a bad path degrades to "no
-    image drawn" rather than an exception."""
+    image drawn" rather than an exception.
+
+    Turned upright by the frame's EXIF orientation, as ``NSImage`` turns it on
+    macOS: a path source looks the same on every backend (see _wic_upright)."""
     buf = ctypes.create_unicode_buffer(path)
     decoder_out = ctypes.c_void_p()
     hr = factory.call(
@@ -1076,7 +1151,7 @@ def wic_load_bitmap_source(factory: ComPtr, path: str) -> ComPtr | None:
             if not hresult_ok(hr):
                 converter.release()
                 return None
-            return converter
+            return _wic_upright(factory, converter, _wic_frame_orientation(frame))
         finally:
             frame.release()
     finally:
@@ -1084,8 +1159,9 @@ def wic_load_bitmap_source(factory: ComPtr, path: str) -> ComPtr | None:
 
 
 def wic_image_size(factory: ComPtr, path: str) -> tuple[int, int] | None:
-    """The stored pixel size of ``path``'s first frame, or ``None`` when WIC
-    cannot read the file.
+    """The pixel size of ``path``'s first frame as it is drawn — upright, so
+    swapped for an EXIF quarter turn, in step with
+    :func:`wic_load_bitmap_source` — or ``None`` when WIC cannot read the file.
 
     Stops at the frame rather than going on to the format converter
     :func:`wic_load_bitmap_source` builds: the size is metadata, and asking for
@@ -1118,11 +1194,80 @@ def wic_image_size(factory: ComPtr, path: str) -> tuple[int, int] | None:
             return None
         frame = ComPtr(frame_out.value)
         try:
-            return wic_bitmap_size(frame)
+            return upright_size(*wic_bitmap_size(frame), _wic_frame_orientation(frame))
         finally:
             frame.release()
     finally:
         decoder.release()
+
+
+def _wic_frame_orientation(frame: ComPtr) -> int:
+    """The frame's EXIF orientation (1-8), or 1 when it has none or the
+    metadata cannot be read — a picture with no readable tag is drawn as
+    stored, which is what it was before anything here asked."""
+    reader_out = ctypes.c_void_p()
+    hr = frame.call(
+        _IDX_WIC_FRAME_GET_METADATA_QUERY_READER, ctypes.c_int32,
+        [ctypes.POINTER(ctypes.c_void_p)], ctypes.byref(reader_out))
+    if not hresult_ok(hr) or not reader_out.value:
+        return 1
+    reader = ComPtr(reader_out.value)
+    try:
+        for query in _WIC_ORIENTATION_QUERIES:
+            value = PROPVARIANT()
+            hr = reader.call(
+                _IDX_WIC_QUERY_READER_GET_METADATA_BY_NAME, ctypes.c_int32,
+                [ctypes.c_wchar_p, ctypes.POINTER(PROPVARIANT)], query, ctypes.byref(value))
+            if not hresult_ok(hr):
+                continue
+            try:
+                if value.vt == VT_UI2:
+                    return int.from_bytes(bytes(value.value[:2]), "little")
+            finally:
+                ole32.PropVariantClear(ctypes.byref(value))
+        return 1
+    finally:
+        reader.release()
+
+
+def _wic_upright(factory: ComPtr, source: ComPtr, orientation: int) -> ComPtr:
+    """``source`` turned upright for ``orientation``. Takes over the caller's
+    reference to ``source`` and hands back one to the result — which is
+    ``source`` itself when there is nothing to turn.
+
+    The picture is first cached whole (``WIC_BITMAP_CACHE_ON_LOAD``), then run
+    through one flip-rotator per pass in :data:`_WIC_UPRIGHT_PASSES`. A step
+    that fails stops there and returns what has been built so far: a picture
+    drawn as stored is better than none."""
+    passes = _WIC_UPRIGHT_PASSES.get(orientation)
+    if not passes:
+        return source
+    cached_out = ctypes.c_void_p()
+    hr = factory.call(
+        _IDX_WIC_FACTORY_CREATE_BITMAP_FROM_SOURCE, ctypes.c_int32,
+        [ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p)],
+        source.addr, WIC_BITMAP_CACHE_ON_LOAD, ctypes.byref(cached_out))
+    if not hresult_ok(hr) or not cached_out.value:
+        return source
+    source.release()
+    current = ComPtr(cached_out.value)
+    for option in passes:
+        rotator_out = ctypes.c_void_p()
+        hr = factory.call(
+            _IDX_WIC_FACTORY_CREATE_BITMAP_FLIP_ROTATOR, ctypes.c_int32,
+            [ctypes.POINTER(ctypes.c_void_p)], ctypes.byref(rotator_out))
+        if not hresult_ok(hr) or not rotator_out.value:
+            return current
+        rotator = ComPtr(rotator_out.value)
+        hr = rotator.call(
+            _IDX_WIC_FLIP_ROTATOR_INITIALIZE, ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_uint32], current.addr, option)
+        if not hresult_ok(hr):
+            rotator.release()
+            return current
+        current.release()  # the rotator holds its own reference to its source
+        current = rotator
+    return current
 
 
 def wic_decoder_extensions(factory: ComPtr) -> frozenset[str]:

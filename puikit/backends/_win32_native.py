@@ -948,9 +948,9 @@ ole32.CoCreateInstance.argtypes = [
 _IDX_WIC_FACTORY_CREATE_DECODER_FROM_FILENAME = 3
 _IDX_WIC_FACTORY_CREATE_FORMAT_CONVERTER = 10
 _IDX_WIC_FACTORY_CREATE_COMPONENT_ENUMERATOR = 23
-# The two below come from the same declaration order but are NOT yet verified
-# live: they serve only the EXIF-orientation path (_wic_upright), which a file
-# without an orientation tag never enters.
+# The two below serve only the EXIF-orientation path (_wic_upright), which a
+# file without an orientation tag never enters; verified live with
+# tests/test_image_orientation.py (all eight orientations, JPEG and TIFF).
 _IDX_WIC_FACTORY_CREATE_BITMAP_FLIP_ROTATOR = 13
 _IDX_WIC_FACTORY_CREATE_BITMAP_FROM_SOURCE = 18
 
@@ -988,8 +988,8 @@ _IDX_WIC_FORMAT_CONVERTER_INITIALIZE = 8
 #     GetColorContexts[9], GetThumbnail[10]; IWICMetadataQueryReader (vtable:
 #     IUnknown[0-2], GetContainerFormat[3], GetLocation[4],
 #     GetMetadataByName[5], GetEnumerator[6]); IWICBitmapFlipRotator :
-#     IWICBitmapSource adds Initialize[8]. From wincodec.h — NOT yet verified
-#     live, like the two factory indices above.
+#     IWICBitmapSource adds Initialize[8]. From wincodec.h; verified live like
+#     the two factory indices above.
 _IDX_WIC_FRAME_GET_METADATA_QUERY_READER = 8
 _IDX_WIC_QUERY_READER_GET_METADATA_BY_NAME = 5
 _IDX_WIC_FLIP_ROTATOR_INITIALIZE = 8

@@ -218,7 +218,17 @@ def natural_size(path: Any) -> tuple[int, int] | None:
     A format only the OS decoder reads has no cheap header answer, so it falls
     through to :func:`_open` and is decoded — into the cache the very next
     ``render`` of it will draw from, so the picture is decoded once either
-    way."""
+    way.
+
+    Upright, like everything this module draws. A picture whose EXIF
+    orientation turns it is sized from :func:`_open`'s upright decode rather
+    than by swapping the header's answer, because Pillow's plugins do not agree
+    on what that answer is: the TIFF plugin already reports the turned size
+    before a pixel is read, the JPEG one reports the stored size. The decode
+    lands in the cache ``render`` draws from, as above. The common formats never
+    get here tagged — the header parse answers a JPEG first."""
+    from ..image import ORIENTATION_TAG
+
     try:
         from PIL import Image
     except ImportError:
@@ -226,7 +236,8 @@ def natural_size(path: Any) -> tuple[int, int] | None:
     else:
         try:
             with Image.open(path) as image:
-                return image.size
+                if image.getexif().get(ORIENTATION_TAG, 1) not in range(2, 9):
+                    return image.size
         except Exception:
             pass
     image = _open(path)
@@ -318,7 +329,7 @@ def _open(source: Any):
     folded into the resample, which needs a resamplable mode to begin with. An
     animated GIF or multi-frame TIFF still renders its first frame.
     """
-    from ..image import is_raster
+    from ..image import exif_upright, is_raster
 
     try:
         from PIL import Image
@@ -338,6 +349,9 @@ def _open(source: Any):
         try:
             image = Image.open(source)
             image.load()
+            # A path is drawn upright on every backend; a raster, above, is
+            # drawn as given, and the OS decoder below has turned it already.
+            image = exif_upright(image)
         except Exception:
             image = None
         if image is None:

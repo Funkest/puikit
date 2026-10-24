@@ -185,7 +185,7 @@ nor changes costs nothing at all per frame — see `_emit_images`.
 
 | Backend | Decoder | `image_formats()` comes from |
 |---|---|---|
-| macOS | `NSImage` / ImageIO — `NSImage.size` reports **points**, not pixels (see §3), so `image_size` reads the stored pixel size from `CGImageSourceCopyPropertiesAtIndex` instead | `NSImage.imageFileTypes()`, minus the Classic OSType codes it mixes in |
+| macOS | `NSImage` / ImageIO — `NSImage.size` reports **points**, not pixels (see §3), so `image_size` reads the pixel size from `CGImageSourceCopyPropertiesAtIndex` instead, turned upright (§10) | `NSImage.imageFileTypes()`, minus the Classic OSType codes it mixes in |
 | Windows | WIC decode, then **manual alpha premultiply** with numpy — neither WIC's converter nor `CreateBitmap` will do it. See [`windows_backend.md`](windows_backend.md) §4 | the installed WIC decoders, enumerated (`CreateComponentEnumerator`) |
 | Web | The browser decodes; the replayer draws to canvas | a fixed list — the decoder is on the far end of the socket and cannot be asked |
 | VT / curses | `_terminal_graphics.py`, or the alt glyph | Pillow's own registry, plugins included, **plus the OS decoder** (§9) |
@@ -345,3 +345,63 @@ in no apartment at all. The flag and the WIC factory are both thread-local now.
 first question rather than done at import. On macOS that is ~65ms once, and only
 for a terminal — a GUI backend has AppKit loaded already. On Linux it is one
 `sys.platform` test.
+
+---
+
+## 10. EXIF orientation: a path is drawn upright, and sized upright
+
+A phone photo held upright is stored landscape — 4032×2268, say — with an EXIF
+`Orientation` of 6, meaning "turn this a quarter clockwise to show it". The rule
+([puikit#174](https://github.com/crftwr/puikit/issues/174)):
+
+- **A path source is drawn upright on every backend, and `image_size` reports
+  the upright size.** What a file should look like is a fact about the file, not
+  about the backend drawing it — the same reason the header parse lives in
+  `puikit.image` once (§2).
+- **A `RasterImage` is drawn exactly as given.** Pixels carry no metadata, so
+  there is nothing to read; the producer decides. `RasterImage.from_pillow` is
+  where the tag is still readable, so it turns the picture upright by default
+  (`upright=False` keeps the stored order). An image the caller generated has no
+  tag and is untouched.
+
+An application needs no orientation logic of its own.
+
+**The two halves have to agree.** Before this, macOS drew through `NSImage`,
+which applies the orientation, and sized through ImageIO's `PixelWidth` /
+`PixelHeight`, which do not. A viewer then fitted a portrait picture into a
+landscape box and stretched it. The web backend did the same, because the
+browser turns the picture and the header parse did not. Windows and the
+terminals agreed with themselves and drew the photo sideways. Distortion and a
+sideways picture are both wrong; only the first is visibly broken, which is why
+the rule names both halves.
+
+| Backend | Drawn upright by | Sized upright by |
+|---|---|---|
+| macOS | `NSImage` (ImageIO), on its own | ImageIO's `Orientation` property, swapped for 5–8 (`upright_size`) |
+| Windows | `_wic_upright`: the frame's orientation (`System.Photo.Orientation`, then the raw JPEG / TIFF query paths), the picture cached whole, then one `IWICBitmapFlipRotator` pass per step | the same orientation, swapped for 5–8 |
+| Web | the browser (`image-orientation: from-image` is the default for `<img>` and `drawImage`) | the header parse |
+| VT / curses | `exif_upright` after Pillow's decode | the header parse for a JPEG; otherwise the decode's own size |
+| `_platform_image` | ImageIO already; WIC through `wic_load_bitmap_source` | — |
+
+**Pieces in `puikit.image`.** `upright_size(w, h, orientation)` swaps for the
+quarter turns (5–8) and leaves every other value — missing, bogus — alone.
+`exif_upright(image)` turns a Pillow image, and reads the tag first because
+`ImageOps.exif_transpose` copies the picture even when there is nothing to turn.
+`exif_upright_size(image)` is the size that turn will produce, for a caller that
+only wants dimensions (see the last paragraph for why it is not a swap).
+The header parse reads the orientation from the JPEG's APP1 segment on the way to
+the frame marker: both byte orders, IFD0 only, and an XMP segment (also APP1) is
+passed over rather than taken for the answer.
+
+**Windows passes are two, not one.** Orientations 5 and 7 are a rotation and a
+mirror. WIC accepts both in one `WICBitmapTransformOptions` value but does not
+document which it applies first, and the two orders give mirror-image pictures —
+so each is its own flip-rotator. The cache before them is there because a
+quarter turn pulls its source column by column, which a JPEG frame answers by
+decoding again and again.
+
+**Pillow's plugins disagree with each other.** The TIFF plugin reports the turned
+size as soon as the file is opened, and turns the pixels on `load()`; the JPEG
+plugin reports the stored size and leaves the pixels alone. So a terminal does
+not swap Pillow's header size: a tagged picture the header parse does not know is
+sized from its upright decode, which lands in the cache `render` draws from.

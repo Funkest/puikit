@@ -110,7 +110,12 @@ class _MemoryWindowHandle(WindowHandle):
         self._closed = True
 
     def is_active(self) -> bool:
-        return self.visible and self.active and not self._closed
+        if not self.visible or self._closed:
+            return False
+        style = self.window_style
+        if not style.activates and style.overlay_input != "keyboard":
+            return True  # never key: active while shown (WindowHandle.is_active)
+        return self.active
 
     def set_title(self, title: str) -> None:
         self.title = title

@@ -473,9 +473,13 @@ class WinWindowHandle(WindowHandle):
 
     def is_active(self) -> bool:
         # The foreground window, as is_main_window_active asks of the main one.
+        # WS_EX_NOACTIVATE never makes it that, whatever overlay_input says,
+        # so a non-activating window is active while shown (see the base).
         if self._closed or not self.hwnd:
             return False
         u = native.user32
+        if not self.window_style.activates:
+            return bool(u.IsWindowVisible(self.hwnd))
         u.GetForegroundWindow.argtypes = []
         u.GetForegroundWindow.restype = ctypes.c_void_p
         return (u.GetForegroundWindow() or 0) == int(self.hwnd)

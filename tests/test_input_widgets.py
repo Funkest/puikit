@@ -431,6 +431,41 @@ def test_caret_holds_still_in_a_window_that_is_not_active(monkeypatch, secondary
     assert _blink_renders(panel, field, monkeypatch) > 0  # active again: it blinks
 
 
+@pytest.mark.parametrize("overlay_input", ["none", "mouse"])
+def test_caret_blinks_in_a_window_that_never_takes_focus_while_it_is_shown(
+        monkeypatch, overlay_input):
+    # A picker driven by a global hook (Keyhac's chooser) never becomes the key
+    # window - its keys are routed by the app - so key status cannot be what
+    # lets its caret blink. Shown, it blinks; hidden, it costs nothing.
+    from puikit import WindowStyle
+    backend = MemoryBackend(width=20, height=6, capabilities=PROFILE_GUI_DESKTOP)
+    window = backend.create_window(
+        20, 6, style=WindowStyle(activates=False, overlay_input=overlay_input))
+    window.active = False  # never key
+    panel = Panel(backend, window=window)
+    field = TextEdit("hi")
+    panel.add(field, x=1, y=1, w=10, h=1)
+    panel.render()
+    assert _blink_renders(panel, field, monkeypatch) > 0
+
+    window.hide()
+    assert _blink_renders(panel, field, monkeypatch) <= 1
+
+
+def test_a_panel_that_takes_keys_without_activating_blinks_only_while_key(monkeypatch):
+    from puikit import WindowStyle
+    backend = MemoryBackend(width=20, height=6, capabilities=PROFILE_GUI_DESKTOP)
+    window = backend.create_window(
+        20, 6, style=WindowStyle(activates=False, overlay_input="keyboard"))
+    panel = Panel(backend, window=window)
+    field = TextEdit("hi")
+    panel.add(field, x=1, y=1, w=10, h=1)
+    panel.render()
+    assert _blink_renders(panel, field, monkeypatch) > 0
+    window.active = False
+    assert _blink_renders(panel, field, monkeypatch) <= 1
+
+
 def test_blink_tick_retires_when_field_leaves_the_tree():
     # The caret-blink tick re-renders to advance the blink phase. When the field
     # leaves the widget tree (its dialog closed) draw stops running, so a stale

@@ -1618,6 +1618,14 @@ class MacWindowHandle(WindowHandle):
         # has been in that region since the flat window style arrived.
         return 0.0 if self._borderless() else 15.0
 
+    def is_active(self) -> bool:
+        # Key, and in the active application - isKeyWindow alone stays True in
+        # a background app. A panel that takes keys without activating the
+        # application (overlay_input="keyboard") is active while it is key.
+        if self._closed or not self.nswindow.isVisible() or not self.nswindow.isKeyWindow():
+            return False
+        return bool(NSApp.isActive()) or not self.window_style.activates
+
     def _borderless(self) -> bool:
         style = self.window_style
         overlay = style.overlay_input if not style.activates else "none"

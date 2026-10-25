@@ -327,6 +327,14 @@ class WindowHandle:
     def closed(self) -> bool:
         return False
 
+    def is_active(self) -> bool:
+        """Whether this window is the one taking keyboard input now: shown,
+        and the key window (macOS) or the foreground window (Windows). A text
+        caret blinks only in an active window, so a window that is hidden or
+        behind another one costs no redraws. Base returns True, for backends
+        without window activation."""
+        return True
+
     @property
     def size_units(self) -> tuple[float, float]:
         """Drawable size in base units (the window's analogue of

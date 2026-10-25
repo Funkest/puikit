@@ -471,6 +471,15 @@ class WinWindowHandle(WindowHandle):
         if hwnd:
             native.user32.DestroyWindow(hwnd)
 
+    def is_active(self) -> bool:
+        # The foreground window, as is_main_window_active asks of the main one.
+        if self._closed or not self.hwnd:
+            return False
+        u = native.user32
+        u.GetForegroundWindow.argtypes = []
+        u.GetForegroundWindow.restype = ctypes.c_void_p
+        return (u.GetForegroundWindow() or 0) == int(self.hwnd)
+
     def set_title(self, title: str) -> None:
         if not self._closed:
             native.user32.SetWindowTextW(self.hwnd, title)

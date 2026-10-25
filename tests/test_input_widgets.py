@@ -385,6 +385,52 @@ def test_textedit_marks_selected_clause_with_thick_underline(backend):
     assert thick == [False, True, True, False]       # only the selected clause
 
 
+def _blink_renders(panel, field, monkeypatch, seconds=3.0):
+    """How many renders the blink tick asks for over ``seconds`` of ticks."""
+    clock = [1000.0]
+    monkeypatch.setattr("puikit.panel.time.monotonic", lambda: clock[0])
+    renders = []
+    real = panel.render
+    monkeypatch.setattr(panel, "render", lambda: (renders.append(1), real()))
+    field._blink_phase = None
+    field._blink_tick()
+    for _ in range(int(seconds * 10)):
+        clock[0] += 0.1
+        field._blink_tick()
+    return len(renders)
+
+
+@pytest.mark.parametrize("secondary", [False, True])
+def test_caret_holds_still_in_a_window_that_is_not_active(monkeypatch, secondary):
+    # A field left focused in a hidden window (a closed chooser, the console
+    # hidden to the tray) kept blinking: a full re-render twice a second for as
+    # long as the app ran. The caret blinks only in the active window.
+    backend = MemoryBackend(width=20, height=6, capabilities=PROFILE_GUI_DESKTOP)
+    window = backend.create_window(20, 6) if secondary else None
+    if not secondary:
+        backend.show_main_window()
+    panel = Panel(backend, window=window)
+    field = TextEdit("hi")
+    panel.add(field, x=1, y=1, w=10, h=1)
+    panel.render()
+    assert field._focused_now is True
+    assert _blink_renders(panel, field, monkeypatch) > 0  # active: it blinks
+
+    if secondary:
+        window.hide()
+    else:
+        backend.main_window_active = False
+    assert panel.caret_visible is True
+    # At most the one render that leaves the caret drawn steady.
+    assert _blink_renders(panel, field, monkeypatch) <= 1
+
+    if secondary:
+        window.show()
+    else:
+        backend.main_window_active = True
+    assert _blink_renders(panel, field, monkeypatch) > 0  # active again: it blinks
+
+
 def test_blink_tick_retires_when_field_leaves_the_tree():
     # The caret-blink tick re-renders to advance the blink phase. When the field
     # leaves the widget tree (its dialog closed) draw stops running, so a stale

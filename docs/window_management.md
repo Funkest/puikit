@@ -133,6 +133,14 @@ win.on_close = ...                       # user clicked close
   surface.
 - `MemoryBackend` windows record everything (`win.snapshot()`,
   `win.style_at()`), so multi-window UIs are testable headlessly.
+- `WindowHandle.is_active()` says whether the window is taking keyboard input
+  now: shown, and the key window of the active app (macOS; a panel that takes
+  keys without activating the app counts while it is key) or the foreground
+  window (Windows). A text caret blinks only in the active window, the main
+  one included (`Backend.is_main_window_active()`). Elsewhere it is drawn
+  steady, so a field left focused in a hidden or covered window costs no
+  redraws. The base returns True; a `MemoryBackend` window answers its
+  `visible` and `active` attributes.
 - Geometry is one rectangle read and written in the same portable top-left
   coordinates: `frame_px()` reads it, `move_to_px(x, y)` sets the corner,
   `resize_to_px(w, h)` sets the size holding that corner still (AppKit

@@ -1793,7 +1793,17 @@ class Panel:
         caps = self.backend.capabilities
         if not (caps.supports("animation") or caps.supports("animation_ticks")):
             return True
+        # Steady in a window that is hidden or not taking keys: the blink tick
+        # re-renders only when this phase flips, so a field left focused in a
+        # hidden window would otherwise redraw it twice a second forever.
+        if not self._window_active():
+            return True
         return int((time.monotonic() - self._caret_phase0) / _CARET_BLINK) % 2 == 0
+
+    def _window_active(self) -> bool:
+        if self._window is not None:
+            return self._window.is_active()
+        return self.backend.is_main_window_active()
 
     def reset_caret_blink(self) -> None:
         """Restart the caret blink cycle with the caret on. A field calls this

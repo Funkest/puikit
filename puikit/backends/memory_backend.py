@@ -88,6 +88,7 @@ class _MemoryWindowHandle(WindowHandle):
         self.title = title
         self.window_style = style if style is not None else WindowStyle()
         self.visible = True
+        self.active = True  # tests model "shown but not taking keys" with this
         # Portable frame in "pixels" (1 px per cell here), starting where the
         # GUI backends create secondary windows.
         self.x = 160.0
@@ -107,6 +108,9 @@ class _MemoryWindowHandle(WindowHandle):
     def close(self) -> None:
         self.visible = False
         self._closed = True
+
+    def is_active(self) -> bool:
+        return self.visible and self.active and not self._closed
 
     def set_title(self, title: str) -> None:
         self.title = title

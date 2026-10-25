@@ -331,8 +331,13 @@ class WindowHandle:
         """Whether this window is the one taking keyboard input now: shown,
         and the key window (macOS) or the foreground window (Windows). A text
         caret blinks only in an active window, so a window that is hidden or
-        behind another one costs no redraws. Base returns True, for backends
-        without window activation."""
+        behind another one costs no redraws.
+
+        A window that never takes keyboard focus (``activates=False``, and
+        on macOS an ``overlay_input`` other than ``"keyboard"``) is active
+        while it is shown: the OS will never make it key, so whatever keys it
+        gets, the app routes to it itself - a picker driven by a global hook.
+        Base returns True, for backends without window activation."""
         return True
 
     @property

@@ -1622,9 +1622,15 @@ class MacWindowHandle(WindowHandle):
         # Key, and in the active application - isKeyWindow alone stays True in
         # a background app. A panel that takes keys without activating the
         # application (overlay_input="keyboard") is active while it is key.
-        if self._closed or not self.nswindow.isVisible() or not self.nswindow.isKeyWindow():
+        # One that never becomes key is active while shown (see the base).
+        if self._closed or not self.nswindow.isVisible():
             return False
-        return bool(NSApp.isActive()) or not self.window_style.activates
+        style = self.window_style
+        if not style.activates and style.overlay_input != "keyboard":
+            return True
+        if not self.nswindow.isKeyWindow():
+            return False
+        return bool(NSApp.isActive()) or not style.activates
 
     def _borderless(self) -> bool:
         style = self.window_style

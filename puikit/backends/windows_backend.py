@@ -1135,6 +1135,10 @@ class WindowsBackend(Backend):
         # a low one across two messages — this holds the high half while
         # waiting for its pair (see _on_char).
         self._pending_high_surrogate: int | None = None
+        # The control code the WM_CHAR after a Ctrl+letter WM_KEYDOWN carries
+        # (Ctrl+J -> 0x0A), which _on_key_down has already sent as the shortcut
+        # (see _on_char). Reset by every WM_KEYDOWN.
+        self._shortcut_control_code: int | None = None
         self._drop_target: Any = None  # the live IDropTarget (_win32_dragdrop.DropTarget), once open()
         self._menu_responder: Any = None
         self._menu_bar_hmenu = 0
@@ -4055,6 +4059,7 @@ class WindowsBackend(Backend):
     def _on_key_down(self, wparam: int) -> None:
         vk = wparam & 0xFFFF
         mods = _key_modifiers()
+        self._shortcut_control_code = None
         name = _VK_KEYS.get(vk)
         if name is not None:
             self._dispatch(Event(type=EventType.KEY, key=name, modifiers=mods))
@@ -4064,6 +4069,8 @@ class WindowsBackend(Backend):
         # let _on_char ignore the resulting control code.
         if ("ctrl" in mods or "alt" in mods) and (vk in _VK_LETTER_RANGE or vk in _VK_DIGIT_RANGE):
             ch = chr(vk).lower()
+            if "ctrl" in mods and vk in _VK_LETTER_RANGE:
+                self._shortcut_control_code = vk - 0x40  # Ctrl+A -> 0x01 ... Ctrl+Z -> 0x1A
             self._dispatch(Event(type=EventType.KEY, key=ch, char=ch, modifiers=mods))
 
     def _on_char(self, wparam: int) -> None:
@@ -4085,6 +4092,13 @@ class WindowsBackend(Backend):
             self._dispatch(char_key_event(chr(combined), _key_modifiers()))
             return
         self._pending_high_surrogate = None
+        if code == self._shortcut_control_code:
+            # Already sent as the shortcut. Four of these codes are also
+            # _CONTROL_KEYS (Ctrl+M / J -> CR / LF, Ctrl+I -> TAB, Ctrl+H -> BS),
+            # so they would otherwise arrive a second time as enter / tab /
+            # backspace.
+            self._shortcut_control_code = None
+            return
         ch = chr(code)
         mods = _key_modifiers()
         name = _CONTROL_KEYS.get(ch)

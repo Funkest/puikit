@@ -776,6 +776,62 @@ def test_ctrl_backspace_is_a_ctrl_modified_backspace(monkeypatch):
         backend.close()
 
 
+def test_ctrl_letter_is_sent_once_not_again_as_a_named_key(monkeypatch):
+    # Ctrl+M / J / I / H: WM_KEYDOWN sends the shortcut, then WM_CHAR carries
+    # CR / LF / TAB / BS, which read as enter / tab / backspace sent it twice.
+    import puikit.backends.windows_backend as wb
+
+    monkeypatch.setattr(wb, "_key_modifiers", lambda: frozenset({"ctrl"}))
+    backend = WindowsBackend()
+    events = []
+    backend._handler = events.append
+    try:
+        for letter, code in (("m", 0x0D), ("j", 0x0A), ("i", 0x09), ("h", 0x08), ("c", 0x03)):
+            events.clear()
+            backend._on_key_down(ord(letter.upper()))
+            backend._on_char(code)
+            assert [(e.key, e.modifiers) for e in events] == [(letter, frozenset({"ctrl"}))]
+    finally:
+        backend.close()
+
+
+def test_ctrl_enter_still_arrives_as_enter(monkeypatch):
+    # Ctrl+Enter's WM_CHAR is LF too, but from VK_RETURN, not from Ctrl+J.
+    import puikit.backends.windows_backend as wb
+
+    monkeypatch.setattr(wb, "_key_modifiers", lambda: frozenset({"ctrl"}))
+    backend = WindowsBackend()
+    events = []
+    backend._handler = events.append
+    try:
+        backend._on_key_down(native.VK_RETURN)
+        backend._on_char(0x0A)
+        assert [(e.key, e.modifiers) for e in events] == [("enter", frozenset({"ctrl"}))]
+    finally:
+        backend.close()
+
+
+def test_a_key_after_a_ctrl_letter_without_wm_char_is_not_dropped(monkeypatch):
+    # The dropped code is the one of the key just pressed: a Ctrl+J whose
+    # WM_CHAR never came must not swallow the Enter pressed next.
+    import puikit.backends.windows_backend as wb
+
+    mods = {"value": frozenset({"ctrl"})}
+    monkeypatch.setattr(wb, "_key_modifiers", lambda: mods["value"])
+    backend = WindowsBackend()
+    events = []
+    backend._handler = events.append
+    try:
+        backend._on_key_down(ord("J"))
+        mods["value"] = frozenset()
+        backend._on_key_down(native.VK_RETURN)
+        backend._on_char(0x0D)
+        assert [(e.key, e.modifiers) for e in events] == [
+            ("j", frozenset({"ctrl"})), ("enter", frozenset())]
+    finally:
+        backend.close()
+
+
 # --- drag-out (begin_file_drag) ---------------------------------------------
 
 

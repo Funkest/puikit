@@ -72,6 +72,13 @@ types for the space bar (xefm#508). Only `" "` becomes the named `space` key of
 
 `key` = lowercase letter, `modifiers ⊇ {"ctrl"}` (or `{"cmd"}`).
 
+> **Windows** sends it from `WM_KEYDOWN`, and drops the control code the
+> following `WM_CHAR` carries (`Ctrl+J` → `0x0A`). Four of those codes are the
+> ones `Enter`, `Tab` and `Backspace` arrive as (`Ctrl+M` / `Ctrl+J` → CR / LF,
+> `Ctrl+I` → TAB, `Ctrl+H` → BS), so read as named keys they would deliver
+> `Ctrl+J` a second time as a ctrl-modified `enter`. `Ctrl+Enter` (LF from
+> `VK_RETURN`) and `Ctrl+Backspace` (§5a) are unaffected.
+
 ## 5. Terminal limits are explicit
 
 curses cannot deliver `cmd`, and arbitrary `alt` / Option + letter combos are

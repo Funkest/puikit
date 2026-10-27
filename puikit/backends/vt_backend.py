@@ -51,7 +51,7 @@ from typing import Any, Callable
 
 from ..backend import Backend, Color, DEFAULT_STYLE, EventHandler, Style, TextAttribute, _run_tick_callbacks
 from ..capability import CapabilityProfile, PROFILE_TUI
-from ..event import Event, EventType, char_key_event, is_typed_char
+from ..event import CONTROL_CHAR_KEYS, Event, EventType, char_key_event, is_typed_char
 from ..image import CONTAIN, COVER, contain_box, cover_source
 from ..text import display_width
 from . import _terminal_graphics
@@ -133,13 +133,6 @@ _SHIFT_PRESSED = 0x0010
 # Virtual key codes worth naming.
 _VK_PROCESSKEY = 0xE5  # "the IME is handling this" — never a command key
 _VK_MENU = 0x12  # the Alt key itself (either side)
-
-#: Characters the console delivers for keys that have a contract NAME rather
-#: than a glyph. Mirrors the curses backend's table so both agree.
-_CONTROL_CHARS = {
-    chr(9): "tab", chr(10): "enter", chr(13): "enter",
-    chr(27): "escape", chr(127): "backspace", chr(8): "backspace",
-}
 
 _VK_KEYS = {
     0x08: "backspace", 0x09: "tab", 0x0D: "enter", 0x1B: "escape",
@@ -298,6 +291,8 @@ class VTBackend(Backend):
             detected["images"] = True
         if self._underline_colors:
             detected["colored_underlines"] = True
+        if getattr(self._console, "ctrl_letters", False):
+            detected["ctrl_letter_keys"] = True
         if detected:
             self.PROFILE = CapabilityProfile({**PROFILE_TUI, **detected})
 
@@ -1016,14 +1011,14 @@ class VTBackend(Backend):
         # making CJK impossible to type (puikit#98 §8.4). So the character wins
         # whenever there is one.
         if char:
-            name = _CONTROL_CHARS.get(char)
+            name = CONTROL_CHAR_KEYS.get(char)
             if name is not None:
                 return Event(EventType.KEY, key=name, modifiers=mods)
             # Ctrl+<letter> arrives as the control byte 0x01..0x1A. Deliver it as
             # a ctrl-modified letter so the shared shortcuts (Ctrl+A/C/X/V) work
             # here exactly as they do under curses. Letters whose control code is
             # already a named key (Ctrl+I=tab, Ctrl+M=enter, Ctrl+H=backspace,
-            # Ctrl+[=escape) kept that meaning via _CONTROL_CHARS above.
+            # Ctrl+[=escape) kept that meaning via CONTROL_CHAR_KEYS above.
             if len(char) == 1 and 0x01 <= ord(char) <= 0x1A:
                 return Event(EventType.KEY, key=chr(ord(char) + 0x60),
                              modifiers=mods | {"ctrl"})
@@ -1174,7 +1169,39 @@ def _win_modifiers(state: int) -> frozenset[str]:
     return frozenset(mods)
 
 
-def _win_key_record(char: str, vk: int, control: int) -> dict:
+def _sends_ctrl_letters(env: dict[str, str] | None = None,
+                        window_class: str = "") -> bool:
+    """Whether this Windows console's key records name the key really pressed,
+    so Ctrl+J can be told from Enter by its virtual key (xefm#760).
+
+    Windows Terminal hands ConPTY each keypress whole, virtual key included, and
+    normalizes a pasted newline (LF or CRLF) to a plain VK_RETURN, so neither a
+    typed Ctrl+J nor a paste is mistaken for the other. A host that talks VT
+    bytes instead — VS Code, WezTerm, an SSH session — sends the control code,
+    and ConPTY can only guess the key back from it: Ctrl+M and Enter are both
+    CR there. So behind ConPTY only Windows Terminal is trusted, identified the
+    way ``_supports_underline_color`` does it.
+
+    The classic console window (conhost) sees the keyboard itself, so its
+    records are the keys pressed too. It pastes CRLF as VK_RETURN and a lone LF
+    as VK_RETURN with Ctrl — Ctrl+Enter, never a letter key, so naming letters
+    by virtual key leaves a paste as it was. ``PUIKIT_CTRL_LETTERS=1`` / ``=0``
+    forces the answer either way.
+    """
+    env = os.environ if env is None else env
+    override = (env.get("PUIKIT_CTRL_LETTERS") or "").strip().lower()
+    if override in ("0", "off", "none", "no"):
+        return False
+    if override in ("1", "on", "yes"):
+        return True
+    if window_class == "ConsoleWindowClass":
+        return True
+    return (window_class == "PseudoConsoleWindow" and bool(env.get("WT_SESSION"))
+            and not env.get("TERM_PROGRAM") and not env.get("SSH_CONNECTION"))
+
+
+def _win_key_record(char: str, vk: int, control: int,
+                    ctrl_letters: bool = False) -> dict:
     """One KEY_EVENT into the engine's neutral key record. The virtual key
     yields the contract NAME (an IME commit has none — the char carries it);
     the control-key state yields the modifier set.
@@ -1195,10 +1222,18 @@ def _win_key_record(char: str, vk: int, control: int) -> dict:
     read every one of those keys as that one chord. Here the virtual key names
     the key and the control-key state carries its modifiers; there is nothing a
     character could add.
+
+    With ``ctrl_letters`` (see ``_sends_ctrl_letters``) a Ctrl+letter is named
+    by its virtual key and its control code dropped, so Ctrl+J arrives as
+    ``j`` with Ctrl, as on the GUI backends, rather than as the Enter its LF
+    would otherwise make it.
     """
     mods = _win_modifiers(control)
     if char == "\x00":
         char = ""
+    if (ctrl_letters and 0x41 <= vk <= 0x5A and "ctrl" in mods
+            and len(char) == 1 and ord(char) < 0x20):
+        return {"type": "key", "char": "", "name": chr(vk + 0x20), "mods": mods}
     name = _VK_KEYS.get(vk)
     if (name is None and not char and 0x41 <= vk <= 0x5A
             and "alt" in mods and "ctrl" not in mods):
@@ -1401,6 +1436,22 @@ class _WindowsConsole:
         # Input records read while probing for the cell size that were not part
         # of the reply; handed to the first real read_input() so nothing is lost.
         self._deferred: list[dict] = []
+        # Whether Ctrl+letters are named by virtual key; also what the backend
+        # reports as ``ctrl_letter_keys``, so the two cannot disagree.
+        self.ctrl_letters = _sends_ctrl_letters(window_class=self._window_class())
+
+    def _window_class(self) -> str:
+        """The console window's class: ``PseudoConsoleWindow`` behind ConPTY."""
+        ctypes, wintypes = self._ctypes, self._wintypes
+        self._k32.GetConsoleWindow.restype = wintypes.HWND
+        self._u32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        hwnd = self._k32.GetConsoleWindow()
+        if not hwnd:
+            return ""
+        buf = ctypes.create_unicode_buffer(64)
+        if not self._u32.GetClassNameW(hwnd, buf, len(buf)):
+            return ""
+        return buf.value
 
     # --- mode ---
 
@@ -1663,6 +1714,7 @@ class _WindowsConsole:
                     continue
                 out.append(_win_key_record(
                     key.UnicodeChar or "", key.wVirtualKeyCode, key.dwControlKeyState,
+                    self.ctrl_letters,
                 ))
             elif rec.EventType == _MOUSE_EVENT:
                 m = rec.Event.MouseEvent

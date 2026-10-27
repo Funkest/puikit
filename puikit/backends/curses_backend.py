@@ -15,7 +15,7 @@ from typing import Any
 
 from ..backend import Backend, Color, DEFAULT_STYLE, EventHandler, Style, TextAttribute, _run_tick_callbacks
 from ..capability import CapabilityProfile, PROFILE_TUI
-from ..event import Event, EventType, char_key_event, is_typed_char
+from ..event import CONTROL_CHAR_KEYS, Event, EventType, char_key_event, is_typed_char
 from ..image import CONTAIN, COVER, contain_box, cover_source
 from ..text import display_width as _display_width
 from ..text import glyph_runs as _glyph_runs
@@ -231,16 +231,6 @@ _KEY_NAMES = {
 }
 # Function keys F1-F12 (keyboard contract Rule 1).
 _KEY_NAMES.update({getattr(curses, f"KEY_F{n}"): f"f{n}" for n in range(1, 13)})
-
-# Control characters that get_wch() returns as one-character strings.
-_CONTROL_CHARS = {
-    "\t": "tab",
-    "\n": "enter",
-    "\r": "enter",
-    "\x1b": "escape",
-    "\x7f": "backspace",
-    "\x08": "backspace",
-}
 
 # --- modified function-key decoding ------------------------------------------
 #
@@ -2088,7 +2078,7 @@ class CursesBackend(Backend):
     def _translate_char(self, ch: str) -> Event | None:
         # Control characters that get_wch delivers as strings map to key names;
         # everything printable (ASCII or multibyte) is a character event.
-        name = _CONTROL_CHARS.get(ch)
+        name = CONTROL_CHAR_KEYS.get(ch)
         if name is not None:
             return Event(type=EventType.KEY, key=name)
         # Ctrl+<letter> arrives as a single byte 0x01..0x1A. Deliver it as a
@@ -2096,7 +2086,7 @@ class CursesBackend(Backend):
         # clipboard shortcuts (Ctrl+A/C/X/V) work in the terminal exactly as Cmd
         # does on GUI. Letters whose control code is already a named key
         # (Ctrl+I=tab, Ctrl+J/M=enter, Ctrl+H=backspace, Ctrl+[=escape) keep that
-        # meaning via _CONTROL_CHARS above.
+        # meaning via CONTROL_CHAR_KEYS above.
         if len(ch) == 1 and 0x01 <= ord(ch) <= 0x1A:
             letter = chr(ord(ch) + 0x60)
             return Event(type=EventType.KEY, key=letter, modifiers=frozenset({"ctrl"}))

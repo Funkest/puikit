@@ -17,6 +17,7 @@ from puikit.backends.vt_backend import (
     _StreamConsole,
     _supports_underline_color,
     _VK_PROCESSKEY,
+    _sends_ctrl_letters,
     _win_key_record,
 )
 from puikit.backend import Style, TextAttribute
@@ -332,6 +333,46 @@ def test_on_windows_the_override_still_wins():
                                       "TERM_PROGRAM": "WezTerm"}, windows=True)
     assert not _supports_underline_color({"PUIKIT_UNDERLINE_COLOR": "0",
                                           "WT_SESSION": "abc"}, windows=True)
+
+
+# --- which Windows console names Ctrl+letters by virtual key (xefm#760) ----
+
+WT = "PseudoConsoleWindow"
+
+
+def test_windows_terminal_names_ctrl_letters():
+    assert _sends_ctrl_letters({"WT_SESSION": "abc"}, WT)
+
+
+def test_the_classic_console_window_names_ctrl_letters():
+    # It reads the keyboard itself; no environment variable is involved.
+    assert _sends_ctrl_letters({}, "ConsoleWindowClass")
+
+
+@pytest.mark.parametrize("env, window_class", [
+    ({}, WT),                                             # another ConPTY host
+    ({"WT_SESSION": "abc", "TERM_PROGRAM": "vscode"}, WT),  # started from a WT tab
+    ({"WT_SESSION": "abc", "SSH_CONNECTION": "1 2 3 4"}, WT),
+    ({"WT_SESSION": "abc"}, ""),                          # no console window at all
+])
+def test_a_host_that_sends_control_codes_does_not(env, window_class):
+    # VT bytes reach ConPTY there, and Ctrl+M and Enter are both CR.
+    assert not _sends_ctrl_letters(env, window_class)
+
+
+def test_the_ctrl_letters_override_wins():
+    assert _sends_ctrl_letters({"PUIKIT_CTRL_LETTERS": "1", "TERM_PROGRAM": "vscode"}, WT)
+    assert not _sends_ctrl_letters({"PUIKIT_CTRL_LETTERS": "0", "WT_SESSION": "abc"}, WT)
+
+
+def test_named_ctrl_letters_leave_the_rest_alone():
+    # Recorded under Windows Terminal and conhost. Only a Ctrl+letter that
+    # produced a control code changes: Ctrl+Enter — also how conhost pastes a
+    # lone LF — a paste's VK_RETURN and AltGr glyphs do not.
+    assert _win_key_record("\n", 0x4A, 0x0008, True)["name"] == "j"
+    assert _win_key_record("\n", 0x0D, 0x0008, True) == _win_key_record("\n", 0x0D, 0x0008)
+    assert _win_key_record("\r", 0x0D, 0, True) == _win_key_record("\r", 0x0D, 0)
+    assert _win_key_record("€", 0x45, 0x0009, True) == _win_key_record("€", 0x45, 0x0009)
 
 
 def test_a_version_below_the_floor_is_not():

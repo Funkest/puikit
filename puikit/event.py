@@ -114,6 +114,25 @@ class Event:
         )
 
 
+#: Control characters that name a contract key, shared by every backend that
+#: reads characters (keyboard contract §1, §4a). A backend adds only what is
+#: its own — macOS's keypad Enter (0x03) and back-tab (0x19) — never by copying
+#: this: a terminal that took 0x03 as enter would turn Ctrl+C into Enter.
+#:
+#: On a terminal these also decide Ctrl+I/J/M/H and Ctrl+[, which send the very
+#: bytes of Tab, Enter (LF, CR), Backspace and Escape; there the named key wins.
+#: A GUI backend sees the letter key and delivers Ctrl+letter instead.
+CONTROL_CHAR_KEYS = {
+    "\t": "tab",
+    "\n": "enter",
+    "\r": "enter",
+    "\x1b": "escape",
+    "\x08": "backspace",
+    # 0x7F: what a terminal's Backspace sends, and Ctrl+Backspace on Windows.
+    "\x7f": "backspace",
+}
+
+
 def is_typed_char(char: str) -> bool:
     """Whether ``char`` is a character a key can produce as text: what
     ``str.isprintable()`` accepts, plus every space separator (category Zs).

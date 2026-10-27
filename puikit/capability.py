@@ -85,6 +85,11 @@ PROFILE_TUI = CapabilityProfile(
                              # Needs real pixels to filter the rendered frame; a
                              # character grid has none, so it stays off and
                              # set_post_effect no-ops.
+    ctrl_letter_keys=False,  # every Ctrl+letter arrives as that letter with Ctrl.
+                             # Off on a terminal, where Ctrl+I/J/M/H send the bytes
+                             # of Tab, Enter and Backspace and arrive as those keys
+                             # (keyboard contract §4a) — so an app can say a
+                             # binding on one of them will never fire here.
 )
 
 PROFILE_GUI_WEB = CapabilityProfile(
@@ -113,6 +118,7 @@ PROFILE_GUI_WEB = CapabilityProfile(
     post_effects=False,    # off until a backend implements the composite pass;
                            # each GUI backend flips it True in its own PROFILE as
                            # the feature lands (macOS: Core Image content filters).
+    ctrl_letter_keys=True,  # the letter key is seen, not its control code
 )
 
 PROFILE_GUI_DESKTOP = CapabilityProfile(

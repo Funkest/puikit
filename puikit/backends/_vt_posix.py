@@ -19,23 +19,35 @@ Design notes, where this deliberately differs from the obvious:
 * **An unfinished escape sequence waits briefly for its tail.** A terminal
   sends a sequence in one burst, so one short grace select separates "the rest
   is in flight" from "the user pressed ESC" — the same trade the curses
-  backend makes with ESCDELAY=100.
+  backend makes with ESCDELAY=100. A link slower than the grace can still split
+  one; the rest, when the very next read brings it, is dropped rather than
+  typed (``strip_late_tail``).
+* **SIGTERM unwinds instead of killing.** Python's default leaves the tty raw,
+  on the alternate screen and reporting the mouse; the shell then echoes
+  nothing and types escape codes at every click. While open, a SIGTERM still
+  at its default raises SystemExit, so ``close()`` runs on the way out, and an
+  atexit hook catches an exit that never reached it. A host's own SIGTERM
+  handler is left alone, and SIGHUP is not touched: the terminal it reports
+  is already gone, with nothing left to restore.
 """
 
 from __future__ import annotations
 
+import atexit
 import base64
 import codecs
 import fcntl
 import os
 import re
 import select
+import signal
 import struct
 import sys
 import termios
+import threading
 import time
 
-from ._vt_input import parse_vt_input
+from ._vt_input import parse_vt_input, strip_late_tail
 
 #: DECSET modes: 1000 click, 1002 motion-while-held (no hover flood — hover is
 #: off in the TUI profile), 1006 SGR encoding. The same modes the curses
@@ -49,6 +61,17 @@ _LEAVE = "\x1b[0m\x1b[?25h\x1b[?1049l"
 
 #: How long to wait for the rest of a partially-arrived escape sequence.
 _ESCAPE_GRACE_S = 0.1
+#: How long after giving up on a sequence its late rest is still recognized
+#: (strip_late_tail). Long enough for a slow link's round trip; short enough
+#: that a key pressed well after a cut is never taken for its tail.
+_LATE_TAIL_S = 1.0
+
+
+def _raise_system_exit(signum, _frame):
+    """SIGTERM while the tty is ours: unwind so close() restores it. Writes
+    nothing itself — the signal may land mid-frame, and a restore sequence
+    spliced into half a CSI would leave the terminal in neither state."""
+    raise SystemExit(128 + signum)
 
 
 class PosixConsole:
@@ -69,6 +92,14 @@ class PosixConsole:
         # seen, stop selecting on it so the event loop keeps its idle cadence
         # instead of spinning hot.
         self._eof = False
+        # (kind, when) of the last sequence the grace wait gave up on, until
+        # the next read has had its chance to carry the rest (strip_late_tail).
+        self._cut: "tuple[str, float] | None" = None
+        self._is_open = False
+        self._atexit_registered = False
+        # The SIGTERM handler this replaced, restored on close; None when this
+        # did not install one.
+        self._prev_sigterm: "object | None" = None
 
     # --- mode ---
 
@@ -85,6 +116,29 @@ class PosixConsole:
         self._apply_raw()
         self._last_size = self.size()
         self.write(_ENTER + _MOUSE_ON)
+        self._is_open = True
+        self._install_exit_guards()
+
+    def _install_exit_guards(self) -> None:
+        if not self._atexit_registered:
+            atexit.register(self.close)
+            self._atexit_registered = True
+        # signal.signal only works on the main thread; elsewhere the atexit
+        # hook is the guard left.
+        if threading.current_thread() is not threading.main_thread():
+            return
+        if signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL:
+            return
+        self._prev_sigterm = signal.SIG_DFL
+        signal.signal(signal.SIGTERM, _raise_system_exit)
+
+    def _remove_exit_guards(self) -> None:
+        if self._prev_sigterm is None:
+            return
+        if (threading.current_thread() is threading.main_thread()
+                and signal.getsignal(signal.SIGTERM) is _raise_system_exit):
+            signal.signal(signal.SIGTERM, self._prev_sigterm)
+        self._prev_sigterm = None
 
     def _apply_raw(self) -> None:
         """Raw input, untouched output: keys arrive unassembled and unechoed,
@@ -120,8 +174,13 @@ class PosixConsole:
             pass
 
     def close(self) -> None:
+        # Idempotent: the atexit hook calls it again after a normal close.
+        if not self._is_open:
+            return
+        self._is_open = False
         self.write(_MOUSE_OFF + _LEAVE)
         self._restore()
+        self._remove_exit_guards()
 
     def suspend(self) -> None:
         """Give the terminal back to a child process: stop mouse reports, leave
@@ -252,6 +311,12 @@ class PosixConsole:
             self._eof = True
             return records
         self._buffer += self._decoder.decode(data)
+        if self._cut is not None:
+            # One read only: past it, what arrives is new typing.
+            kind, when = self._cut
+            self._cut = None
+            if time.monotonic() - when <= _LATE_TAIL_S:
+                self._buffer = strip_late_tail(self._buffer, kind)
         parsed, self._buffer = parse_vt_input(self._buffer)
         records.extend(parsed)
         if self._buffer:
@@ -267,6 +332,8 @@ class PosixConsole:
         out: list[dict] = []
         while self._buffer:
             if not self._wait_readable(deadline - time.monotonic()):
+                kind = "esc" if self._buffer == "\x1b" else "body"
+                self._cut = (kind, time.monotonic())
                 parsed, self._buffer = parse_vt_input(self._buffer, flush=True)
                 out.extend(parsed)
                 break

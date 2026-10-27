@@ -14,6 +14,7 @@ import os
 import select
 import struct
 import sys
+import time
 
 import pytest
 
@@ -294,6 +295,58 @@ def test_open_enters_alt_screen_and_enables_mouse(tty_pair):
     assert "\x1b[?1049l" in out
     con.resume()
     con.close()
+
+
+def test_sigterm_unwinds_through_close_instead_of_killing(tty_pair):
+    # Python's default SIGTERM ends the process without running finally, so
+    # the shell got the tty back raw, on the alternate screen, mouse on.
+    import signal
+
+    master, slave = tty_pair
+    before = signal.getsignal(signal.SIGTERM)
+    assert before is signal.SIG_DFL  # the precondition this guard needs
+    con = PosixConsole(in_fd=slave, out_fd=slave)
+    con.open()
+    drain_master(master)
+    with pytest.raises(SystemExit):
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(1)  # the handler runs at the next bytecode boundary
+        finally:
+            con.close()
+    out = drain_master(master).decode()
+    assert "\x1b[?1049l" in out and "\x1b[?1006l" in out
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL  # handed back
+
+
+def test_a_host_sigterm_handler_is_left_alone(tty_pair):
+    import signal
+
+    def host_handler(signum, frame):
+        pass
+
+    master, slave = tty_pair
+    previous = signal.signal(signal.SIGTERM, host_handler)
+    try:
+        con = PosixConsole(in_fd=slave, out_fd=slave)
+        con.open()
+        assert signal.getsignal(signal.SIGTERM) is host_handler
+        con.close()
+        assert signal.getsignal(signal.SIGTERM) is host_handler
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def test_close_twice_restores_once(tty_pair):
+    # The atexit hook calls close() again after the app's own close; the
+    # second must not write the leave sequence into the shell's screen.
+    master, slave = tty_pair
+    con = PosixConsole(in_fd=slave, out_fd=slave)
+    con.open()
+    con.close()
+    drain_master(master)
+    con.close()
+    assert drain_master(master, timeout=0.05) == b""
 
 
 def test_typed_bytes_become_key_records(tty_pair):

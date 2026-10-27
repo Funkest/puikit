@@ -87,15 +87,22 @@ CR), Ctrl+H is Backspace (0x08). Nothing in the byte says which key was pressed.
 | Backend | Ctrl+J delivers |
 |---|---|
 | macOS, Windows, web (GUI) | `key="j"`, `{"ctrl"}` — the letter key is seen |
-| Windows console (VT) | `key="enter"`, `{"ctrl"}` — the named key, Ctrl from key state |
+| Windows console (VT) in Windows Terminal or the classic console window | `key="j"`, `{"ctrl"}` — the letter key, from the virtual key |
+| Windows console (VT), any other host | `key="enter"`, `{"ctrl"}` — the named key, Ctrl from key state |
 | POSIX tty (VT, curses) | `key="enter"`, `{}` — the named key; a tty cannot report Ctrl |
 
 So on a TUI **the named key wins**, and a binding on Ctrl+I/J/M/H never fires
 there: it is Tab, Enter or Backspace instead. An application binds these as
 GUI-only, per §5, or warns when such a binding is made for a TUI — the
-`ctrl_letter_keys` capability says which side of this line a backend is on. The Windows
-console's input records do name the letter key, but it is still delivered as the
-named key, so one TUI build behaves the same over every console.
+`ctrl_letter_keys` capability says which side of this line a backend is on.
+
+Windows Terminal and the classic console window (conhost) are the TUIs on the
+GUI side, and they report `ctrl_letter_keys` true. Their input records name the
+key that was pressed, and a pasted newline arrives as Enter (or, a lone LF in
+the classic window, Ctrl+Enter) — never a letter key, so reading the virtual key
+cannot turn a paste into Ctrl+J. Any other host feeds ConPTY VT bytes (VS Code,
+WezTerm, SSH), and there Ctrl+M and Enter are the same CR.
+`PUIKIT_CTRL_LETTERS=1` or `=0` overrides the detection.
 
 Ctrl+[ is not portable either: it is Escape on a terminal and on Windows, and
 `[` with Ctrl on macOS and the web. Do not bind it.

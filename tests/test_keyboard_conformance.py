@@ -9,12 +9,17 @@ them (xefm#760) or under another name shows up as one row disagreeing.
 
 Raw inputs come from each platform's documented delivery, not from a recording
 yet: Windows GUI from the WM_KEYDOWN -> WM_CHAR pair TranslateMessage queues,
-the Windows console from ReadConsoleInputW's KEY_EVENT fields, a POSIX tty from
-the bytes xterm sends in its default mode. Replace a row's raw input with a
-recording when one is taken, and name the environment it came from.
+a POSIX tty from the bytes xterm sends in its default mode. Replace a row's raw
+input with a recording when one is taken, and name the environment it came from.
+The Windows console column IS a recording, from ReadConsoleInputW under both
+Windows Terminal and the classic console window, which agreed on every row. A
+pasted newline arrived as the Enter row's record, except a lone LF pasted into
+the classic window, which arrived as Ctrl+Enter's.
 
 Ctrl+I/J/M/H is where GUI and TUI part (contract §4a): a GUI sees the letter
 key, a terminal only the control byte, which is Tab / Enter / Backspace's own.
+Those two hosts cross to the GUI side: their records name the letter key, and
+the console reads them that way there (``win_term``, from the same records).
 """
 
 import io
@@ -39,6 +44,7 @@ LEFT_CTRL = 0x0008
 #   macos     (charactersIgnoringModifiers, mods)
 #   web       (KeyboardEvent.key, mods)
 #   win_con   (UnicodeChar, vk, dwControlKeyState)
+#   win_term  the win_con records, read as under those hosts (no column)
 #   posix     the bytes a tty delivers
 #   curses    what get_wch() returns
 RAW = {
@@ -90,7 +96,7 @@ EXPECTED = {
 
 def _expected(key, surface):
     row = EXPECTED[key]
-    if surface in GUI:
+    if surface in GUI or surface == "win_term":
         return row["gui"]
     if surface == "win_con":
         return row["win_con"]
@@ -128,6 +134,11 @@ def _through_vt_engine(records):
 def _win_con(raw):
     char, vk, control = raw
     return _through_vt_engine([_win_key_record(char, vk, control)])
+
+
+def _win_term(raw):
+    char, vk, control = raw
+    return _through_vt_engine([_win_key_record(char, vk, control, ctrl_letters=True)])
 
 
 def _posix(raw):
@@ -187,14 +198,17 @@ def _win_gui(raw):
 
 SURFACES = {
     "win_gui": _win_gui, "macos": _macos, "web": _web,
-    "win_con": _win_con, "posix": _posix, "curses": _curses,
+    "win_con": _win_con, "win_term": _win_term, "posix": _posix, "curses": _curses,
 }
+# A surface that reads another one's raw input.
+RAW_OF = {"win_term": "win_con"}
 
 
 @pytest.mark.parametrize("surface", list(SURFACES))
 @pytest.mark.parametrize("key", list(RAW))
 def test_one_keypress_is_one_contract_event(key, surface):
-    events = [e for e in SURFACES[surface](RAW[key][surface]) if e is not None]
+    raw = RAW[key][RAW_OF.get(surface, surface)]
+    events = [e for e in SURFACES[surface](raw) if e is not None]
     assert [(e.key, e.modifiers) for e in events] == [_expected(key, surface)]
 
 
@@ -205,6 +219,9 @@ def test_ctrl_letter_keys_capability_matches_the_table():
 
     assert PROFILE_WEB.supports("ctrl_letter_keys")
     assert not VTBackend(console=_Console()).capabilities.supports("ctrl_letter_keys")
+    terminal = _Console()
+    terminal.ctrl_letters = True   # what _WindowsConsole sets under Windows Terminal
+    assert VTBackend(console=terminal).capabilities.supports("ctrl_letter_keys")
     assert not CursesBackend().capabilities.supports("ctrl_letter_keys")
     if sys.platform == "win32":
         from puikit.backends.windows_backend import WindowsBackend
@@ -216,5 +233,5 @@ def test_ctrl_letter_keys_capability_matches_the_table():
 
 def test_every_row_covers_every_surface():
     for key, row in RAW.items():
-        assert set(row) == set(SURFACES), key
+        assert set(row) == set(SURFACES) - set(RAW_OF), key
         assert key in EXPECTED

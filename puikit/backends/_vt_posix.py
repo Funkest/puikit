@@ -19,7 +19,9 @@ Design notes, where this deliberately differs from the obvious:
 * **An unfinished escape sequence waits briefly for its tail.** A terminal
   sends a sequence in one burst, so one short grace select separates "the rest
   is in flight" from "the user pressed ESC" — the same trade the curses
-  backend makes with ESCDELAY=100.
+  backend makes with ESCDELAY=100. A link slower than the grace can still split
+  one; the rest, when the very next read brings it, is dropped rather than
+  typed (``strip_late_tail``).
 * **SIGTERM unwinds instead of killing.** Python's default leaves the tty raw,
   on the alternate screen and reporting the mouse; the shell then echoes
   nothing and types escape codes at every click. While open, a SIGTERM still
@@ -45,7 +47,7 @@ import termios
 import threading
 import time
 
-from ._vt_input import parse_vt_input
+from ._vt_input import parse_vt_input, strip_late_tail
 
 #: DECSET modes: 1000 click, 1002 motion-while-held (no hover flood — hover is
 #: off in the TUI profile), 1006 SGR encoding. The same modes the curses
@@ -59,6 +61,10 @@ _LEAVE = "\x1b[0m\x1b[?25h\x1b[?1049l"
 
 #: How long to wait for the rest of a partially-arrived escape sequence.
 _ESCAPE_GRACE_S = 0.1
+#: How long after giving up on a sequence its late rest is still recognized
+#: (strip_late_tail). Long enough for a slow link's round trip; short enough
+#: that a key pressed well after a cut is never taken for its tail.
+_LATE_TAIL_S = 1.0
 
 
 def _raise_system_exit(signum, _frame):
@@ -86,6 +92,9 @@ class PosixConsole:
         # seen, stop selecting on it so the event loop keeps its idle cadence
         # instead of spinning hot.
         self._eof = False
+        # (kind, when) of the last sequence the grace wait gave up on, until
+        # the next read has had its chance to carry the rest (strip_late_tail).
+        self._cut: "tuple[str, float] | None" = None
         self._is_open = False
         self._atexit_registered = False
         # The SIGTERM handler this replaced, restored on close; None when this
@@ -302,6 +311,12 @@ class PosixConsole:
             self._eof = True
             return records
         self._buffer += self._decoder.decode(data)
+        if self._cut is not None:
+            # One read only: past it, what arrives is new typing.
+            kind, when = self._cut
+            self._cut = None
+            if time.monotonic() - when <= _LATE_TAIL_S:
+                self._buffer = strip_late_tail(self._buffer, kind)
         parsed, self._buffer = parse_vt_input(self._buffer)
         records.extend(parsed)
         if self._buffer:
@@ -317,6 +332,8 @@ class PosixConsole:
         out: list[dict] = []
         while self._buffer:
             if not self._wait_readable(deadline - time.monotonic()):
+                kind = "esc" if self._buffer == "\x1b" else "body"
+                self._cut = (kind, time.monotonic())
                 parsed, self._buffer = parse_vt_input(self._buffer, flush=True)
                 out.extend(parsed)
                 break

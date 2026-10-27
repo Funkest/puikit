@@ -23,6 +23,8 @@ POSIX console they are the only way those keys exist at all.
 
 from __future__ import annotations
 
+import re
+
 from ..event import Event, EventType
 
 # --- key tables ---------------------------------------------------------------
@@ -178,6 +180,34 @@ def parse_vt_input(text: str, flush: bool = False) -> tuple[list[dict], str]:
         records.extend(_escape_records(text[i + 1:end]))
         i = end
     return records, ""
+
+
+#: What is left of a CSI/SS3 cut after its introducer: parameter bytes,
+#: intermediates, a final byte.
+_CUT_BODY_TAIL = re.compile(r"[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]")
+#: A whole sequence body arriving after its ESC was given up on. SS3 only with
+#: the finals keys send (arrows, Home/End, F1-F4), so typed "Ok" is not one.
+_CUT_ESC_TAIL = re.compile(r"\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|O[A-DFHP-S]")
+
+
+def strip_late_tail(text: str, cut: str) -> str:
+    """``text`` without the leading rest of a sequence the grace wait gave up on.
+
+    Past the grace wait, ``parse_vt_input(flush=True)`` decides the ESC was a
+    keypress and drops whatever body had come with it. On a slow link the rest
+    arrives afterwards and, with no ESC in front, was typed: a cut ``ESC [1;5``
+    left a ``D``, a cut mouse report its ``;12M`` — each one a command key in an
+    application that binds letters.
+
+    ``cut`` says what was cut. ``"body"``: an ESC and part of a body, so what
+    follows can only be the rest of that body, and is dropped when it has that
+    shape. ``"esc"``: a lone ESC, which is also what the Escape key sends; only
+    a whole body in one read (``[A``, ``OP``, ``[<0;5;7M``) is dropped, since a
+    person typing ``[`` sends it in a read of its own.
+    """
+    pattern = _CUT_BODY_TAIL if cut == "body" else _CUT_ESC_TAIL
+    match = pattern.match(text)
+    return text[match.end():] if match else text
 
 
 def _escape_end(text: str, start: int) -> "int | None":

@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from puikit.backends._vt_input import parse_vt_input
+from puikit.backends._vt_input import parse_vt_input, strip_late_tail
 from puikit.event import EventType
 
 if sys.platform != "win32":
@@ -136,6 +136,22 @@ def test_flush_turns_the_esc_into_the_escape_key():
     # sequence that never completed — not typed into the app.
     recs, _ = parse_vt_input("\x1b[1;5", flush=True)
     assert [r["name"] for r in recs] == ["escape"]
+
+
+def test_strip_late_tail_after_a_cut_body():
+    assert strip_late_tail("D", "body") == ""             # ESC [1;5 | D
+    assert strip_late_tail(";12Mab", "body") == "ab"     # a cut mouse report
+    assert strip_late_tail("\x1b[A", "body") == "\x1b[A"  # a new sequence, not a tail
+
+
+def test_strip_late_tail_after_a_lone_esc():
+    assert strip_late_tail("[A", "esc") == ""
+    assert strip_late_tail("OPx", "esc") == "x"
+    assert strip_late_tail("[<0;5;7Mq", "esc") == "q"
+    # What a person types after pressing Escape is left alone.
+    assert strip_late_tail("[", "esc") == "["
+    assert strip_late_tail("D", "esc") == "D"
+    assert strip_late_tail("Ok", "esc") == "Ok"
 
 
 def test_an_escape_right_before_a_sequence_does_not_swallow_its_esc():
@@ -372,6 +388,41 @@ def test_a_lone_escape_is_the_escape_key(tty_pair):
     recs = con.read_input(500)  # waits out the escape grace, then decides
     con.close()
     assert [r["name"] for r in recs] == ["escape"]
+
+
+def test_the_late_rest_of_a_cut_sequence_is_not_typed(tty_pair):
+    # A slow link splits Ctrl+Left: ESC [1;5 arrives, the grace wait gives up,
+    # then the D lands on its own — and used to be typed as the letter.
+    master, slave = tty_pair
+    set_winsize(slave, 24, 80)
+    con = PosixConsole(in_fd=slave, out_fd=slave)
+    con.open()
+    drain_master(master)
+    os.write(master, b"\x1b[1;5")
+    first = con.read_input(500)
+    os.write(master, b"Dx")
+    second = con.read_input(500)
+    con.close()
+    assert [r["name"] for r in first] == ["escape"]
+    assert [r["char"] for r in second] == ["x"]  # D dropped, what follows kept
+
+
+def test_typing_after_an_escape_press_is_kept(tty_pair):
+    # Escape, then the user types "[" and "x": a read of its own each, never a
+    # whole sequence body, so nothing is taken for a late tail.
+    master, slave = tty_pair
+    set_winsize(slave, 24, 80)
+    con = PosixConsole(in_fd=slave, out_fd=slave)
+    con.open()
+    drain_master(master)
+    os.write(master, b"\x1b")
+    con.read_input(500)
+    os.write(master, b"[")
+    typed = con.read_input(500)
+    os.write(master, b"x")
+    typed += con.read_input(500)
+    con.close()
+    assert [r["char"] for r in typed] == ["[", "x"]
 
 
 def test_a_size_change_is_reported_and_reflected(tty_pair):

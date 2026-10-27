@@ -51,7 +51,7 @@ from ..capability import PROFILE_GUI_DESKTOP, CapabilityProfile
 from ..image import is_raster, source_key
 from ._image_cache import MISS, ImageCache
 from ..easing import resolve as _resolve_easing
-from ..event import Event, EventType, char_key_event, is_typed_char
+from ..event import CONTROL_CHAR_KEYS, Event, EventType, char_key_event, is_typed_char
 from ..font import Font, FontMetrics, grid_aligned
 from ..text import display_width, glyph_runs as _glyph_runs, is_cjk, cjk_segments, utf16_units
 
@@ -271,20 +271,6 @@ _ICON_GLYPHS = {
     "error": "❌",
     "info": "ℹ️",
     "check": "✅",
-}
-
-# WM_CHAR delivers these control characters for non-arrow editing keys (the
-# Windows analogue of the macOS backend's _CONTROL_KEYS).
-_CONTROL_KEYS = {
-    "\r": "enter",
-    "\n": "enter",
-    "\t": "tab",
-    "\x1b": "escape",
-    "\x08": "backspace",
-    # Ctrl+Backspace: Windows sends WM_CHAR 0x7F (DEL) for it while plain
-    # Backspace comes as 0x08. Mapping it to backspace lets the still-held Ctrl
-    # (read from key state in _on_char) drive a word-delete backward.
-    "\x7f": "backspace",
 }
 
 # WM_KEYDOWN virtual-key codes for keys that never produce a WM_CHAR.
@@ -4112,7 +4098,10 @@ class WindowsBackend(Backend):
         self._pending_high_surrogate = None
         ch = chr(code)
         mods = _key_modifiers()
-        name = _CONTROL_KEYS.get(ch)
+        # WM_CHAR carries Enter, Tab, Escape and Backspace as control codes.
+        # Ctrl+Backspace comes as 0x7F (plain Backspace is 0x08); naming it
+        # backspace lets the still-held Ctrl drive a word-delete backward.
+        name = CONTROL_CHAR_KEYS.get(ch)
         if name is not None:
             self._dispatch(Event(type=EventType.KEY, key=name, modifiers=mods))
             return

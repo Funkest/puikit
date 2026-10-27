@@ -1,9 +1,11 @@
 # PuiKit Keyboard Contract — Design
 
-Status: **implemented** on curses, macOS, and Windows via the shared helper
-`puikit.event.char_key_event`. The IME focus-gating half (§7) is covered by
-`tests/test_text_input_gating.py`; the per-backend key translation is exercised by
-downstream contract tests in the applications that consume it.
+Status: **implemented** on macOS, Windows, web, VT (Windows console and POSIX
+tty) and curses via the shared helpers `puikit.event.char_key_event` and
+`puikit.event.CONTROL_CHAR_KEYS`. The IME focus-gating half (§6) is covered by
+`tests/test_text_input_gating.py`. `tests/test_keyboard_conformance.py` holds
+the backends side by side: one row per keypress, one column per backend, so a
+key one backend reads differently shows up as a row that disagrees.
 
 This document is the normative spec for keyboard semantics across PuiKit's
 backends. A widget or application never branches on backend type to read the
@@ -71,6 +73,37 @@ types for the space bar (xefm#508). Only `" "` becomes the named `space` key of
 ## 4. Ctrl/Cmd + letter
 
 `key` = lowercase letter, `modifiers ⊇ {"ctrl"}` (or `{"cmd"}`).
+
+One keypress is **one** event. A backend that learns of Ctrl+letter from two
+messages (Windows: the keydown, then the control code `TranslateMessage` queues
+behind it) delivers it once.
+
+## 4a. Ctrl+I / J / M / H — where GUI and TUI part
+
+A terminal sends a Ctrl+letter as its control code, and four of those are the
+very bytes of named keys: Ctrl+I is Tab (0x09), Ctrl+J and Ctrl+M are Enter (LF,
+CR), Ctrl+H is Backspace (0x08). Nothing in the byte says which key was pressed.
+
+| Backend | Ctrl+J delivers |
+|---|---|
+| macOS, Windows, web (GUI) | `key="j"`, `{"ctrl"}` — the letter key is seen |
+| Windows console (VT) | `key="enter"`, `{"ctrl"}` — the named key, Ctrl from key state |
+| POSIX tty (VT, curses) | `key="enter"`, `{}` — the named key; a tty cannot report Ctrl |
+
+So on a TUI **the named key wins**, and a binding on Ctrl+I/J/M/H never fires
+there: it is Tab, Enter or Backspace instead. An application binds these as
+GUI-only, per §5, or warns when such a binding is made for a TUI. The Windows
+console's input records do name the letter key, but it is still delivered as the
+named key, so one TUI build behaves the same over every console.
+
+Ctrl+[ is not portable either: it is Escape on a terminal and on Windows, and
+`[` with Ctrl on macOS and the web. Do not bind it.
+
+The control codes that name keys are one table, `puikit.event.CONTROL_CHAR_KEYS`,
+shared by every backend that reads characters. A backend adds only codes its own
+platform sends (macOS: keypad Enter 0x03, back-tab 0x19) and never copies one
+into the shared table — a terminal that read 0x03 as Enter would make Ctrl+C
+press Enter.
 
 ## 5. Terminal limits are explicit
 

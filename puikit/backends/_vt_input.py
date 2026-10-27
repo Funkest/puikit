@@ -51,13 +51,6 @@ _CSI_TILDE_KEYS = {
 #: move by word, Alt+d deletes the next word; Alt+Backspace is handled apart).
 _META_WORD_KEYS = {"b": "left", "f": "right", "d": "delete"}
 
-#: Control characters that arrive as bare bytes and name a contract key.
-#: (Ctrl+I/J/M/H/[ collide with these; the named key wins on every backend.)
-_CONTROL_CHAR_KEYS = {
-    "\t": "tab", "\n": "enter", "\r": "enter",
-    "\x1b": "escape", "\x7f": "backspace", "\x08": "backspace",
-}
-
 # SGR mouse button-code bits (xterm 1006): low 2 bits select the button,
 # plus flags for wheel, motion, and keyboard modifiers.
 _SGR_BUTTON = 0x03

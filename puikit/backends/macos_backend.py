@@ -143,7 +143,7 @@ from ..capability import PROFILE_GUI_DESKTOP, CapabilityProfile
 from ..image import is_raster, source_key, upright_size
 from ._image_cache import MISS, ImageCache
 from ..easing import resolve as _resolve_easing
-from ..event import Event, EventType, char_key_event, is_typed_char
+from ..event import CONTROL_CHAR_KEYS, Event, EventType, char_key_event, is_typed_char
 from ..font import Font, FontMetrics, FontWeight
 from ..text import cjk_segments, display_width, glyph_runs as _glyph_runs, utf16_units
 
@@ -580,15 +580,13 @@ _FUNCTION_KEYS = {
     **{0xF704 + i: f"f{i + 1}" for i in range(12)},
 }
 
+# The shared table plus AppKit's own codes. translate_key reads
+# charactersIgnoringModifiers, so Ctrl+J arrives as "j", never as LF.
 _CONTROL_KEYS = {
-    "\r": "enter",
-    "\n": "enter",
+    **CONTROL_CHAR_KEYS,
     "\x03": "enter",  # numeric keypad enter
-    "\t": "tab",
     "\x19": "tab",    # Shift+Tab: AppKit sends NSBackTabCharacter (0x19), with
                       # the shift flag set, so it resolves to a shift-modified tab
-    "\x1b": "escape",
-    "\x7f": "backspace",
 }
 
 # Icon names -> emoji glyphs. macOS renders these as full-color glyphs, which

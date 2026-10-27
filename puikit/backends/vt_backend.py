@@ -51,7 +51,7 @@ from typing import Any, Callable
 
 from ..backend import Backend, Color, DEFAULT_STYLE, EventHandler, Style, TextAttribute, _run_tick_callbacks
 from ..capability import CapabilityProfile, PROFILE_TUI
-from ..event import Event, EventType, char_key_event, is_typed_char
+from ..event import CONTROL_CHAR_KEYS, Event, EventType, char_key_event, is_typed_char
 from ..image import CONTAIN, COVER, contain_box, cover_source
 from ..text import display_width
 from . import _terminal_graphics
@@ -133,13 +133,6 @@ _SHIFT_PRESSED = 0x0010
 # Virtual key codes worth naming.
 _VK_PROCESSKEY = 0xE5  # "the IME is handling this" — never a command key
 _VK_MENU = 0x12  # the Alt key itself (either side)
-
-#: Characters the console delivers for keys that have a contract NAME rather
-#: than a glyph. Mirrors the curses backend's table so both agree.
-_CONTROL_CHARS = {
-    chr(9): "tab", chr(10): "enter", chr(13): "enter",
-    chr(27): "escape", chr(127): "backspace", chr(8): "backspace",
-}
 
 _VK_KEYS = {
     0x08: "backspace", 0x09: "tab", 0x0D: "enter", 0x1B: "escape",
@@ -1016,14 +1009,14 @@ class VTBackend(Backend):
         # making CJK impossible to type (puikit#98 §8.4). So the character wins
         # whenever there is one.
         if char:
-            name = _CONTROL_CHARS.get(char)
+            name = CONTROL_CHAR_KEYS.get(char)
             if name is not None:
                 return Event(EventType.KEY, key=name, modifiers=mods)
             # Ctrl+<letter> arrives as the control byte 0x01..0x1A. Deliver it as
             # a ctrl-modified letter so the shared shortcuts (Ctrl+A/C/X/V) work
             # here exactly as they do under curses. Letters whose control code is
             # already a named key (Ctrl+I=tab, Ctrl+M=enter, Ctrl+H=backspace,
-            # Ctrl+[=escape) kept that meaning via _CONTROL_CHARS above.
+            # Ctrl+[=escape) kept that meaning via CONTROL_CHAR_KEYS above.
             if len(char) == 1 and 0x01 <= ord(char) <= 0x1A:
                 return Event(EventType.KEY, key=chr(ord(char) + 0x60),
                              modifiers=mods | {"ctrl"})

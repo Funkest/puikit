@@ -356,6 +356,27 @@ def _key_modifiers() -> frozenset[str]:
     return frozenset(mods)
 
 
+def _discard_queued_char(hwnd: int | None, code: int) -> None:
+    """Drop the WM_CHAR a Ctrl+letter keydown queued, when it carries `code`.
+
+    TranslateMessage posts that WM_CHAR before the keydown is dispatched, so it
+    is already in the queue here. Most such codes are ignored by _on_char, but
+    Ctrl+J/M/I/H produce LF/CR/TAB/BS — which _on_char reads as enter, tab and
+    backspace — so the one keypress used to arrive as two keys (xefm#760).
+    Removing it here keeps no state across messages: a WM_CHAR that never
+    arrives leaves nothing behind to swallow a later Ctrl+Enter (also LF). Any
+    other code is left alone (an AltGr glyph, a layout that maps differently).
+    """
+    msg = wintypes.MSG()
+    if not native.user32.PeekMessageW(ctypes.byref(msg), hwnd, native.WM_CHAR,
+                                      native.WM_CHAR, native.PM_NOREMOVE):
+        return
+    if msg.wParam & 0xFFFF != code:
+        return
+    native.user32.PeekMessageW(ctypes.byref(msg), hwnd, native.WM_CHAR,
+                               native.WM_CHAR, native.PM_REMOVE)
+
+
 @dataclass
 class Animation:
     """One running transition; ported near-verbatim from the macOS backend's
@@ -4014,7 +4035,7 @@ class WindowsBackend(Backend):
         if msg == native.WM_MOUSEWHEEL:
             return self._on_mouse_wheel(wparam, lparam)
         if msg in (native.WM_KEYDOWN, native.WM_SYSKEYDOWN):
-            self._on_key_down(wparam)
+            self._on_key_down(wparam, hwnd)
             if msg == native.WM_SYSKEYDOWN:
                 return native.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
             return 0
@@ -4052,7 +4073,7 @@ class WindowsBackend(Backend):
         y = native.signed_word(native.hiword(lparam))
         return (x / self._base_w, y / self._base_h)
 
-    def _on_key_down(self, wparam: int) -> None:
+    def _on_key_down(self, wparam: int, hwnd: int | None = None) -> None:
         vk = wparam & 0xFFFF
         mods = _key_modifiers()
         name = _VK_KEYS.get(vk)
@@ -4063,6 +4084,10 @@ class WindowsBackend(Backend):
         # control code (Ctrl+C -> 0x03); synthesize the shortcut form here and
         # let _on_char ignore the resulting control code.
         if ("ctrl" in mods or "alt" in mods) and (vk in _VK_LETTER_RANGE or vk in _VK_DIGIT_RANGE):
+            if "ctrl" in mods and vk in _VK_LETTER_RANGE:
+                # Before dispatching: the shortcut may open a modal whose loop
+                # would otherwise deliver the queued char first.
+                _discard_queued_char(hwnd, vk & 0x1F)
             ch = chr(vk).lower()
             self._dispatch(Event(type=EventType.KEY, key=ch, char=ch, modifiers=mods))
 
@@ -4380,7 +4405,7 @@ class WindowsBackend(Backend):
         if msg == native.WM_MOUSEWHEEL:
             return self._on_mouse_wheel(wparam, lparam)
         if msg in (native.WM_KEYDOWN, native.WM_SYSKEYDOWN):
-            self._on_key_down(wparam)
+            self._on_key_down(wparam, hwnd)
             if msg == native.WM_SYSKEYDOWN:
                 return native.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
             return 0

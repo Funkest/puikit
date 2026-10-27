@@ -776,6 +776,71 @@ def test_ctrl_backspace_is_a_ctrl_modified_backspace(monkeypatch):
         backend.close()
 
 
+def _pump_keystroke(backend, vk, char_code):
+    """Queue a keydown and the WM_CHAR TranslateMessage would post behind it,
+    then dispatch both through the window procedure the way the event loop
+    does. The WM_CHAR sits in the real queue while the keydown is handled."""
+    hwnd = backend._hwnd
+    native.user32.PostMessageW(hwnd, native.WM_CHAR, char_code, 0)
+    backend._handle_message(hwnd, native.WM_KEYDOWN, vk, 0)
+    msg = wintypes.MSG()
+    while native.user32.PeekMessageW(ctypes.byref(msg), hwnd, native.WM_CHAR,
+                                     native.WM_CHAR, native.PM_REMOVE):
+        backend._handle_message(hwnd, msg.message, msg.wParam, msg.lParam)
+
+
+@pytest.mark.parametrize("letter, code", [("j", 0x0A), ("m", 0x0D), ("i", 0x09), ("h", 0x08)])
+def test_ctrl_letter_whose_code_is_a_named_key_dispatches_once(monkeypatch, letter, code):
+    # Ctrl+J/M/I/H queue WM_CHAR LF/CR/TAB/BS behind the keydown; read as
+    # enter/tab/backspace, a Ctrl-J binding also pressed Enter (xefm#760).
+    from puikit.event import EventType
+
+    monkeypatch.setattr(windows_backend, "_key_modifiers", lambda: frozenset({"ctrl"}))
+    backend = WindowsBackend(width=40, height=12, title="puikit-ctrl-letter")
+    backend.open()
+    events = []
+    backend._handler = events.append
+    try:
+        _pump_keystroke(backend, ord(letter.upper()), code)
+        assert [(e.type, e.key, e.modifiers) for e in events] == [
+            (EventType.KEY, letter, frozenset({"ctrl"}))]
+    finally:
+        backend._handler = None
+        backend.close()
+
+
+def test_ctrl_enter_still_arrives_as_enter(monkeypatch):
+    # Ctrl+Enter also queues LF; VK_RETURN is not a letter, so that LF must
+    # survive as a ctrl-modified enter.
+    monkeypatch.setattr(windows_backend, "_key_modifiers", lambda: frozenset({"ctrl"}))
+    backend = WindowsBackend(width=40, height=12, title="puikit-ctrl-enter")
+    backend.open()
+    events = []
+    backend._handler = events.append
+    try:
+        _pump_keystroke(backend, native.VK_RETURN, 0x0A)
+        assert [(e.key, e.modifiers) for e in events] == [("enter", frozenset({"ctrl"}))]
+    finally:
+        backend._handler = None
+        backend.close()
+
+
+def test_ctrl_letter_leaves_a_char_it_did_not_produce(monkeypatch):
+    # Only the control code the letter itself produces is dropped: an AltGr
+    # chord (Ctrl+Alt) that types a glyph keeps it.
+    monkeypatch.setattr(windows_backend, "_key_modifiers", lambda: frozenset({"ctrl", "alt"}))
+    backend = WindowsBackend(width=40, height=12, title="puikit-altgr")
+    backend.open()
+    events = []
+    backend._handler = events.append
+    try:
+        _pump_keystroke(backend, ord("Q"), ord("@"))
+        assert [e.key for e in events] == ["q", "@"]
+    finally:
+        backend._handler = None
+        backend.close()
+
+
 # --- drag-out (begin_file_drag) ---------------------------------------------
 
 

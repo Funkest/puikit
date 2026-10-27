@@ -2009,6 +2009,7 @@ WM_DPICHANGED = 0x02E0
 WM_APP = 0x8000
 
 # PeekMessageW: pull the message out of the queue rather than leaving it there.
+PM_NOREMOVE = 0x0000
 PM_REMOVE = 0x0001
 
 # MsgWaitForMultipleObjectsEx: wake for any queued input, and also when the

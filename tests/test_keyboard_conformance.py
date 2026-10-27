@@ -198,6 +198,22 @@ def test_one_keypress_is_one_contract_event(key, surface):
     assert [(e.key, e.modifiers) for e in events] == [_expected(key, surface)]
 
 
+def test_ctrl_letter_keys_capability_matches_the_table():
+    # The capability is how an application learns which column it is in, so
+    # it must agree with what the Ctrl+J row delivers.
+    from puikit.backends.web_backend import PROFILE_WEB
+
+    assert PROFILE_WEB.supports("ctrl_letter_keys")
+    assert not VTBackend(console=_Console()).capabilities.supports("ctrl_letter_keys")
+    assert not CursesBackend().capabilities.supports("ctrl_letter_keys")
+    if sys.platform == "win32":
+        from puikit.backends.windows_backend import WindowsBackend
+        assert WindowsBackend.PROFILE.supports("ctrl_letter_keys")
+    if sys.platform == "darwin":
+        from puikit.backends.macos_backend import MacOSBackend
+        assert MacOSBackend.PROFILE.supports("ctrl_letter_keys")
+
+
 def test_every_row_covers_every_surface():
     for key, row in RAW.items():
         assert set(row) == set(SURFACES), key

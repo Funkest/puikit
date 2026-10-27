@@ -92,7 +92,8 @@ CR), Ctrl+H is Backspace (0x08). Nothing in the byte says which key was pressed.
 
 So on a TUI **the named key wins**, and a binding on Ctrl+I/J/M/H never fires
 there: it is Tab, Enter or Backspace instead. An application binds these as
-GUI-only, per §5, or warns when such a binding is made for a TUI. The Windows
+GUI-only, per §5, or warns when such a binding is made for a TUI — the
+`ctrl_letter_keys` capability says which side of this line a backend is on. The Windows
 console's input records do name the letter key, but it is still delivered as the
 named key, so one TUI build behaves the same over every console.
 

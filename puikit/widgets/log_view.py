@@ -83,10 +83,15 @@ Pos = tuple[int, int]
 
 def _col_to_index(glyphs: list[str], target_col: int) -> int:
     """Glyph index at display column ``target_col``, walking by glyph width so a
-    wide (CJK) glyph counts as two columns — the same rule the renderer uses."""
+    wide (CJK) glyph counts as two columns — the same rule the renderer uses.
+
+    A glyph is a whole run, not one character: a decomposed voiced kana (``テ``
+    + U+3099, how macOS file names often arrive) or an emoji with its selector
+    is two code points, so its width is ``display_width`` of the run —
+    ``char_width`` takes a single character and raised on these (#783)."""
     idx, col = 0, 0
     while idx < len(glyphs) and col < target_col:
-        col += char_width(glyphs[idx])
+        col += display_width(glyphs[idx])
         idx += 1
     return idx
 

@@ -156,6 +156,26 @@ def test_logview_drag_selection_copies_visible_text(backend):
     assert log.selection_text() == "bcd"
 
 
+@pytest.mark.parametrize(
+    "text, x0, x1, selected",
+    [
+        # Decomposed voiced kana (テ + U+3099), as macOS file names arrive: each
+        # is one two-column glyph of two code points.
+        ("abデーダcd", 2, 8, "デーダ"),
+        # An emoji with its presentation selector is one two-column glyph too.
+        ("a❤️bc", 1, 4, "❤️b"),
+    ],
+)
+def test_logview_click_maps_multi_codepoint_glyphs(backend, text, x0, x1, selected):
+    panel = Panel(backend)
+    log = LogView([text], auto_scroll=False)
+    panel.add(log, x=0, y=0, w=20, h=5)
+    panel.render()
+    panel.dispatch_event(Event(type=EventType.MOUSE_DOWN, x=x0, y=0, button="left"))
+    panel.dispatch_event(Event(type=EventType.MOUSE_DRAG, x=x1, y=0, button="left"))
+    assert log.selection_text() == selected
+
+
 def test_logview_outside_press_drag_in_does_not_select(backend):
     panel = Panel(backend)
     log = LogView(["abcdef"], auto_scroll=False)
